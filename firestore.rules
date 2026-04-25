@@ -1,0 +1,58 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // Helper functions
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+    
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+    
+    function isAdmin() {
+      // Admin pode ser o email específico OU quem tem role 'admin'
+      return isAuthenticated() && (
+        request.auth.token.email == "frontwork08@gmail.com" ||
+        request.auth.token.email == "frontwork@newbank.com"
+      );
+    }
+
+    match /users/{userId} {
+      // Qualquer usuário autenticado pode ler a lista de usuários (para fazer PIX)
+      allow read: if isAuthenticated();
+      
+      // Criar próprio perfil com saldo inicial bloqueado em 1000
+      allow create: if isOwner(userId) && 
+                    request.resource.data.saldo == 1000;
+      
+      // Regras de Update
+      allow update: if 
+        // Admin pode tudo
+        isAdmin() ||
+        // Usuário pode atualizar o próprio NOME (mas não saldo ou e-mail por aqui)
+        (isOwner(userId) && 
+         request.resource.data.diff(resource.data).affectedKeys().hasOnly(['nome'])) ||
+        // Regra para PIX: 
+        // 1. Remetente diminui seu saldo
+        // 2. Destinatário aumenta seu saldo
+        (isAuthenticated() && 
+         request.resource.data.diff(resource.data).affectedKeys().hasOnly(['saldo']) &&
+         (isOwner(userId) ? request.resource.data.saldo < resource.data.saldo : request.resource.data.saldo > resource.data.saldo))
+    }
+
+    match /transactions/{transactionId} {
+      // Usuários podem ler transações onde são remetente ou destinatário
+      allow read: if isAuthenticated() && (
+        request.auth.uid == resource.data.senderUid || 
+        request.auth.uid == resource.data.recipientUid ||
+        isAdmin()
+      );
+      
+      // Criar transação (registro do PIX)
+      allow create: if isAuthenticated() && 
+                    request.resource.data.senderUid == request.auth.uid;
+    }
+  }
+}
