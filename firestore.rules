@@ -49,7 +49,9 @@ service cloud.firestore {
       // Criar transação (PIX, Investimentos, Cassino)
       allow create: if isAuthenticated() && (
         request.resource.data.from == request.auth.uid ||
-        request.resource.data.senderId == request.auth.uid
+        request.resource.data.to == request.auth.uid ||
+        request.resource.data.senderId == request.auth.uid ||
+        request.resource.data.recipientId == request.auth.uid
       );
     }
   }

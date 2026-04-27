@@ -249,21 +249,23 @@ export default function App() {
     switch (symbol) {
       case 'LION':
         return (
-          <svg viewBox="0 0 24 24" className="w-16 h-16 text-orange-500 fill-none stroke-current stroke-[1.5]">
-            <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8z" />
-            <path d="M12 7c-2.76 0-5 2.24-5 5s2.24 5 5 5 5-2.24 5-5-2.24-5-5-5zm0 8c-1.65 0-3-1.35-3-3s1.35-3 3-3 3 1.35 3 3-1.35 3-3 3z" />
-            <path d="M12 10v4M10 12h4M12 12l2 2M12 12l-2-2M12 12l2-2M12 12l-2 2" />
-            <path d="M7 7l1.5 1.5M17 7l-1.5 1.5M7 17l1.5-1.5M17 17l-1.5-1.5" />
+          <svg viewBox="0 0 24 24" className="w-16 h-16 text-orange-500 fill-none stroke-current stroke-[1.2]">
+            <path d="M12 4C7.58 4 4 7.58 4 12s3.58 8 8 8 8-3.58 8-8-3.58-8-8-8zm0 14.5c-3.59 0-6.5-2.91-6.5-6.5S8.41 5.5 12 5.5s6.5 2.91 6.5 6.5-2.91 6.5-6.5 6.5z" />
+            <path d="M12 8c-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4-1.79-4-4-4zm0 6.5c-1.38 0-2.5-1.12-2.5-2.5s1.12-2.5 2.5-2.5 2.5 1.12 2.5 2.5-1.12 2.5-2.5 2.5z" />
+            <path d="M10.5 11c-.28 0-.5.22-.5.5s.22.5.5.5.5-.22.5-.5-.22-.5-.5-.5zm3 0c-.28 0-.5.22-.5.5s.22.5.5.5.5-.22.5-.5-.22-.5-.5-.5z" />
+            <path d="M12 13v2m-1-1h2" />
+            <path d="M8 8.5L9.5 10M16 8.5L14.5 10M9 15l-1.5 1.5M15 15l1.5 1.5" />
+            <path d="M6 12h1M17 12h1M12 6V5M12 19v-1" />
           </svg>
         );
       case 'FIRE':
-        return <Zap size={48} className="text-red-500" />;
+        return <Zap size={56} className="text-red-500 stroke-[1.5]" />;
       case 'DIAMOND':
-        return <Trophy size={48} className="text-blue-400" />;
+        return <Trophy size={56} className="text-blue-400 stroke-[1.5]" />;
       case 'ORANGE':
-        return <Dices size={48} className="text-orange-400" />;
+        return <Dices size={56} className="text-orange-400 stroke-[1.5]" />;
       case 'SEVEN':
-        return <span className="text-6xl font-black text-white italic">7</span>;
+        return <span className="text-7xl font-black text-white/80 italic outline-text">7</span>;
       default:
         return null;
     }
@@ -306,12 +308,12 @@ export default function App() {
       }
     };
 
-    if (dashboardSection === 'investments') {
+    if (dashboardSection === 'casino' || dashboardSection === 'investments') {
       fetchBtcPrice();
       const interval = setInterval(fetchBtcPrice, 30000); // 30 seconds
       return () => clearInterval(interval);
     }
-  }, [dashboardSection]);
+  }, [dashboardSection, casinoSubTab]);
 
   // Auth Listener
   useEffect(() => {
@@ -1154,7 +1156,7 @@ export default function App() {
                       </button>
                       <button 
                         onClick={() => setDashboardSection('casino')}
-                        className={`p-4 rounded-2xl border transition-all flex flex-col items-center gap-2 ${dashboardSection === 'casino' || dashboardSection === 'investments' ? 'bg-orange-600 text-white border-orange-400 shadow-[0_0_15px_rgba(234,88,12,0.4)]' : 'bg-white/5 text-white border-white/10 hover:bg-white/10'}`}
+                        className={`p-4 rounded-2xl border transition-all flex flex-col items-center gap-2 ${dashboardSection === 'casino' ? 'bg-orange-600 text-white border-orange-400 shadow-[0_0_15px_rgba(234,88,12,0.4)]' : 'bg-white/5 text-white border-white/10 hover:bg-white/10'}`}
                       >
                         <Dices size={20} />
                         <span className="text-[10px] font-bold uppercase tracking-widest">Cassino</span>
@@ -1447,7 +1449,7 @@ export default function App() {
                       exit={{ opacity: 0, y: -20 }}
                       className="space-y-6"
                     >
-                      <div className="flex bg-black/40 p-2 rounded-2xl border border-white/5 gap-2">
+                      <div className="flex bg-black/60 p-2 rounded-2xl border border-white/10 gap-2 mb-8">
                         <button 
                           onClick={() => setCasinoSubTab('lion')}
                           className={`flex-1 py-3 rounded-xl font-black text-xs uppercase tracking-[0.2em] transition-all flex items-center justify-center gap-2 ${casinoSubTab === 'lion' ? 'bg-orange-600 text-white shadow-lg' : 'text-white/40 hover:bg-white/5'}`}
@@ -1463,31 +1465,36 @@ export default function App() {
                       </div>
 
                       {casinoSubTab === 'bitcoin' ? (
-                        /* BITCOIN UI (Already defined, reused here) */
-                        <div className="bg-[#0a0a0a] backdrop-blur-2xl p-8 rounded-[32px] border border-orange-500/30 shadow-[0_0_50px_rgba(249,115,22,0.15)] overflow-hidden relative">
-                           {/* ... Content of Bitcoin section inherited from before ... */}
-                           <div className="absolute -top-24 -right-24 w-64 h-64 bg-orange-500/10 rounded-full blur-[80px]"></div>
+                        <div className="bg-[#0a0a0a]/80 backdrop-blur-3xl p-8 rounded-[40px] border border-orange-500/30 shadow-[0_0_80px_rgba(249,115,22,0.1)] overflow-hidden relative">
+                           <div className="absolute top-0 right-0 w-96 h-96 bg-orange-500/5 rounded-full blur-[100px] pointer-events-none"></div>
+                           
                            <div className="relative z-10">
-                            <div className="flex flex-col md:flex-row md:items-center justify-between gap-6 mb-12">
-                              <div className="flex items-center gap-4">
-                                <div className="w-16 h-16 bg-orange-500 flex items-center justify-center rounded-2xl shadow-[0_0_20px_rgba(249,115,22,0.5)] transform -rotate-3">
-                                  <Bitcoin size={32} className="text-black" />
+                            <div className="flex flex-col md:flex-row md:items-center justify-between gap-8 mb-12">
+                              <div className="flex items-center gap-5">
+                                <div className="w-20 h-20 bg-orange-500/10 border border-orange-500/50 flex items-center justify-center rounded-[24px] shadow-[0_0_30px_rgba(249,115,22,0.2)] transform -rotate-3">
+                                  <Bitcoin size={40} className="text-orange-500" />
                                 </div>
                                 <div>
-                                  <h3 className="text-2xl font-black text-white italic uppercase tracking-tighter">Market Bitcoin</h3>
-                                  <p className="text-orange-500/60 text-xs font-bold tracking-widest uppercase">Operação em Tempo Real</p>
+                                  <h3 className="text-3xl font-black text-white italic uppercase tracking-tighter">Market Bitcoin</h3>
+                                  <div className="flex items-center gap-2">
+                                    <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse shadow-[0_0_8px_rgba(34,197,94,1)]"></div>
+                                    <p className="text-orange-500/60 text-[10px] font-black tracking-widest uppercase">Operação Direta</p>
+                                  </div>
                                 </div>
                               </div>
+                              
                               <div className="text-right">
-                                <p className="text-[10px] font-black text-white/40 uppercase tracking-[0.2em] mb-1">Preço Atual (BRL)</p>
-                                <div className="flex items-center justify-end gap-3">
-                                  <h4 className="text-4xl font-black text-white tracking-tighter">
-                                    {btcPrice ? `R$ ${btcPrice.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}` : '---'}
+                                <p className="text-[10px] font-black text-white/40 uppercase tracking-[0.3em] mb-2">Preço de Mercado</p>
+                                <div className="flex items-center justify-end gap-4">
+                                  <h4 className="text-5xl font-black text-white tracking-tighter tabular-nums">
+                                    {btcPrice ? `R$ ${btcPrice.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}` : 'CARREGANDO...'}
                                   </h4>
-                                  <div className={`px-2 py-1 rounded-md text-[10px] font-black flex items-center gap-1 ${btcChange >= 0 ? 'bg-green-500/20 text-green-400' : 'bg-red-500/20 text-red-500'}`}>
-                                    {btcChange >= 0 ? <ArrowUpRight size={10} /> : <ArrowDownRight size={10} />}
-                                    {Math.abs(btcChange).toFixed(2)}%
-                                  </div>
+                                  {btcChange !== null && (
+                                    <div className={`px-3 py-1.5 rounded-lg text-xs font-black flex items-center gap-1.5 ${btcChange >= 0 ? 'bg-green-500/10 text-green-400 border border-green-500/20' : 'bg-red-500/10 text-red-500 border border-red-500/20'}`}>
+                                      {btcChange >= 0 ? <ArrowUpRight size={14} /> : <ArrowDownRight size={14} />}
+                                      {Math.abs(btcChange).toFixed(2)}%
+                                    </div>
+                                  )}
                                 </div>
                               </div>
                             </div>
@@ -1556,9 +1563,10 @@ export default function App() {
                             <div className="flex items-center gap-6 mb-10">
                                 <div className="w-24 h-24 bg-orange-600 rounded-[32px] flex items-center justify-center shadow-[0_0_30px_rgba(234,88,12,0.5)] transform -rotate-12 border-4 border-black">
                                   <svg viewBox="0 0 24 24" className="w-16 h-16 text-black fill-none stroke-current stroke-2">
-                                    <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8z" />
-                                    <path d="M12 7c-2.76 0-5 2.24-5 5s2.24 5 5 5 5-2.24 5-5-2.24-5-5-5z" />
-                                    <path d="M12 10l-2 5h4l-2-5z" />
+                                    <path d="M12 4C7.58 4 4 7.58 4 12s3.58 8 8 8 8-3.58 8-8-3.58-8-8-8zm0 14.5c-3.59 0-6.5-2.91-6.5-6.5S8.41 5.5 12 5.5s6.5 2.91 6.5 6.5-2.91 6.5-6.5 6.5z" />
+                                    <path d="M12 8c-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4-1.79-4-4-4zm0 6.5c-1.38 0-2.5-1.12-2.5-2.5s1.12-2.5 2.5-2.5 2.5 1.12 2.5 2.5-1.12 2.5-2.5 2.5z" />
+                                    <path d="M10.5 11c-.28 0-.5.22-.5.5s.22.5.5.5.5-.22.5-.5-.22-.5-.5-.5zm3 0c-.28 0-.5.22-.5.5s.22.5.5.5.5-.22.5-.5-.22-.5-.5-.5z" />
+                                    <path d="M12 13v2m-1-1h2" />
                                   </svg>
                                 </div>
                                 <div className="text-center md:text-left">
