@@ -324,18 +324,23 @@ export default function App() {
           'ETH': 'ethereum',
           'SOL': 'solana'
         };
-        const coinId = coinMap[investCrypto] || 'bitcoin';
+        const currentSymbol = investCrypto;
+        const coinId = coinMap[currentSymbol] || 'bitcoin';
         const response = await fetch(`https://api.coingecko.com/api/v3/simple/price?ids=${coinId}&vs_currencies=brl&include_24hr_change=true`);
+        if (!response.ok) throw new Error('Falha na API de preços');
         const data = await response.json();
-        const price = data[coinId].brl;
-        const change = data[coinId].brl_24h_change;
         
-        setCryptoPrice(price);
-        setCryptoChange(change);
-        setCryptoHistory(prev => {
-          const newHistory = [...prev, price].slice(-20);
-          return newHistory;
-        });
+        if (data[coinId] && currentSymbol === investCrypto) {
+          const price = data[coinId].brl;
+          const change = data[coinId].brl_24h_change;
+          
+          setCryptoPrice(price);
+          setCryptoChange(change);
+          setCryptoHistory(prev => {
+            const newHistory = [...prev, price].slice(-20);
+            return newHistory;
+          });
+        }
       } catch (error) {
         console.error('Error fetching crypto price:', error);
       }
@@ -343,10 +348,16 @@ export default function App() {
 
     if (dashboardSection === 'casino' || dashboardSection === 'investments') {
       fetchPrice();
-      const interval = setInterval(fetchPrice, 30000); // 30 seconds
+      const interval = setInterval(fetchPrice, 15000); // 15 seconds for more responsive updates
       return () => clearInterval(interval);
     }
   }, [dashboardSection, investCrypto]);
+
+  // Reset history when switching crypto
+  useEffect(() => {
+    setCryptoPrice(null);
+    setCryptoHistory([]);
+  }, [investCrypto]);
 
   // Auth Listener
   useEffect(() => {
