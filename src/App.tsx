@@ -605,7 +605,11 @@ export default function App() {
       showToast(`PIX de R$ ${valor.toFixed(2)} enviado com sucesso!`);
       e.currentTarget.reset();
     } catch (error: any) {
-      showToast(error.message, 'error');
+      try {
+        handleFirestoreError(error, OperationType.WRITE, 'transactions/pix_transfer');
+      } catch (e) {
+        showToast(error.message || 'Erro no PIX', 'error');
+      }
     }
   };
 
@@ -710,6 +714,8 @@ export default function App() {
           transaction.update(recipientRef, { saldo: recipientData.saldo + amount });
           
           transaction.set(transactionRef, {
+            from: userData.uid,
+            to: recipientData.uid,
             senderUid: userData.uid,
             senderName: userData.nome,
             recipientUid: recipientData.uid,
@@ -725,7 +731,12 @@ export default function App() {
         showToast('Pagamento via Aproximação realizado!');
       } catch (error: any) {
         setNfcStep('error');
-        showToast(error.message, 'error');
+        try {
+          handleFirestoreError(error, OperationType.WRITE, 'transactions/nfc_payment');
+        } catch (e) {
+          // handleFirestoreError re-throws, we want to catch the original for the toast
+          showToast(error.message || 'Erro na transação. Verifique as permissões.', 'error');
+        }
       }
     }, 2500);
   };

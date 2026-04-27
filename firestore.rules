@@ -2,32 +2,78 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
     
-    // Helper functions
-    function isAuthenticated() {
+    // Global Safety Net
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // --- Hardened Helpers ---
+    function isSignedIn() {
       return request.auth != null;
     }
-    
+
     function isOwner(userId) {
-      return isAuthenticated() && request.auth.uid == userId;
+      return isSignedIn() && request.auth.uid == userId;
     }
-    
+
     function isAdmin() {
-      // Admin pode ser o email específico OU quem tem role 'admin'
-      return isAuthenticated() && (
+      // Identity lookup for admin role
+      return isSignedIn() && (
         request.auth.token.email == "frontwork08@gmail.com" ||
         request.auth.token.email == "frontwork@newbank.com"
       );
     }
 
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    // --- Validation Blueprints ---
+    function isValidUser(data) {
+      return data.uid is string && data.uid.size() <= 128 &&
+             data.nome is string && data.nome.size() <= 100 &&
+             data.email is string && data.email.size() <= 100 &&
+             data.saldo is number &&
+             data.pixKey is string && data.pixKey.size() <= 100;
+    }
+
+    function isValidTransaction(data) {
+      return data.amount is number && 
+             data.amount > 0 &&
+             data.timestamp != null;
+    }
+
+    function isValidCard(data) {
+      return data.cardNumber is string &&
+             data.cardHolder is string &&
+             data.status in ['active', 'blocked'];
+    }
+
+    // --- Collections ---
+
     match /users/{userId} {
-      // Aberto para o simulador bancário
-      allow read: if true;
+      // Permitir leitura do próprio perfil. 
+      // Permitir listagem (PIX lookup) apenas se autenticado (limitado pelo cliente via query)
+      allow get: if isOwner(userId) || isAdmin();
+      allow list: if isSignedIn(); 
       
-      // Permitir criação para novos usuários
-      allow create: if true;
+      allow create: if isSignedIn() && isValidUser(incoming()) && (isOwner(userId) || isAdmin());
       
-      // Permitir updates (para PIX e Admin)
-      allow update: if true;
+      allow update: if isSignedIn() && (
+        // Action: Owner profile update
+        (isOwner(userId) && incoming().diff(existing()).affectedKeys().hasOnly(['nome', 'pixKey', 'role', 'btcBalance', 'ethBalance', 'solBalance'])) ||
+        // Action: Transfer/Game Balance update (Only saldo changed)
+        (incoming().diff(existing()).affectedKeys().hasOnly(['saldo', 'btcBalance', 'ethBalance', 'solBalance'])) ||
+        isAdmin()
+      );
 
       match /cards/{cardId} {
         allow read, write: if isOwner(userId) || isAdmin();
@@ -36,23 +82,19 @@ service cloud.firestore {
 
     match /transactions/{transactionId} {
       // Usuários podem ler transações onde são remetente ou destinatário
-      allow read: if isAuthenticated() && (
+      allow read: if isSignedIn() && (
         request.auth.uid == resource.data.senderUid || 
         request.auth.uid == resource.data.recipientUid ||
-        request.auth.uid == resource.data.senderId || 
-        request.auth.uid == resource.data.recipientId ||
         request.auth.uid == resource.data.from ||
         request.auth.uid == resource.data.to ||
         isAdmin()
       );
       
-      // Criar transação (PIX, Investimentos, Cassino)
-      allow create: if isAuthenticated() && (
-        request.resource.data.from == request.auth.uid ||
-        request.resource.data.to == request.auth.uid ||
-        request.resource.data.senderId == request.auth.uid ||
-        request.resource.data.recipientId == request.auth.uid
-      );
+      allow create: if isSignedIn() && (
+        incoming().senderUid == request.auth.uid ||
+        incoming().from == request.auth.uid ||
+        isAdmin()
+      ) && isValidTransaction(incoming());
     }
   }
 }

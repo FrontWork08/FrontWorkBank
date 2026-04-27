@@ -2,104 +2,68 @@
   "entities": {
     "User": {
       "title": "User",
-      "description": "Represents a bank user with their balance and profile information.",
+      "description": "User profile and balance info",
       "type": "object",
       "properties": {
-        "uid": {
-          "type": "string",
-          "description": "Unique identifier for the user (Firebase Auth UID)."
-        },
-        "nome": {
-          "type": "string",
-          "description": "Full name of the user."
-        },
-        "email": {
-          "type": "string",
-          "format": "email",
-          "description": "Email address of the user."
-        },
-        "pixKey": {
-          "type": "string",
-          "description": "Custom PIX key of the user."
-        },
-        "saldo": {
-          "type": "number",
-          "description": "Current balance of the user in BRL."
-        },
-        "createdAt": {
-          "type": "string",
-          "format": "date-time",
-          "description": "Timestamp when the user account was created."
-        }
+        "uid": { "type": "string" },
+        "nome": { "type": "string" },
+        "email": { "type": "string" },
+        "saldo": { "type": "number" },
+        "pixKey": { "type": "string" },
+        "role": { "type": "string" },
+        "btcBalance": { "type": "number" },
+        "ethBalance": { "type": "number" },
+        "solBalance": { "type": "number" },
+        "createdAt": { "type": "string", "format": "date-time" }
       },
-      "required": ["uid", "nome", "email", "saldo", "createdAt"]
+      "required": ["uid", "nome", "email", "saldo", "pixKey"]
     },
     "Transaction": {
       "title": "Transaction",
-      "description": "Represents a PIX transfer between users.",
+      "description": "A financial transaction between users or systems",
       "type": "object",
       "properties": {
-        "id": {
-          "type": "string",
-          "description": "Unique identifier for the transaction."
-        },
-        "senderUid": {
-          "type": "string",
-          "description": "UID of the user who sent the PIX."
-        },
-        "senderName": {
-          "type": "string",
-          "description": "Name of the sender."
-        },
-        "recipientUid": {
-          "type": "string",
-          "description": "UID of the user who received the PIX."
-        },
-        "recipientName": {
-          "type": "string",
-          "description": "Name of the recipient."
-        },
-        "amount": {
-          "type": "number",
-          "description": "Amount transferred."
-        },
-        "timestamp": {
-          "type": "string",
-          "format": "date-time",
-          "description": "Timestamp when the transaction occurred."
-        }
+        "senderUid": { "type": "string" },
+        "senderName": { "type": "string" },
+        "recipientUid": { "type": "string" },
+        "recipientName": { "type": "string" },
+        "amount": { "type": "number" },
+        "type": { "type": "string" },
+        "action": { "type": "string" },
+        "cryptoAmount": { "type": "number" },
+        "cryptoSymbol": { "type": "string" },
+        "paymentSource": { "type": "string" },
+        "timestamp": { "type": "string", "format": "date-time" }
       },
-      "required": ["senderUid", "senderName", "recipientUid", "recipientName", "amount", "timestamp"]
+      "required": ["amount", "timestamp"]
     },
     "Card": {
       "title": "Card",
-      "description": "Represents a virtual or physical bank card.",
+      "description": "Virtual card information",
       "type": "object",
       "properties": {
-        "id": { "type": "string" },
         "cardNumber": { "type": "string" },
-        "expiry": { "type": "string" },
+        "cardHolder": { "type": "string" },
+        "expiryDate": { "type": "string" },
         "cvv": { "type": "string" },
-        "holderName": { "type": "string" },
-        "type": { "type": "string", "enum": ["virtual", "physical"] },
-        "status": { "type": "string", "enum": ["active", "blocked"] },
-        "createdAt": { "type": "string", "format": "date-time" }
+        "status": { "type": "string" },
+        "type": { "type": "string" }
       },
-      "required": ["cardNumber", "expiry", "cvv", "holderName", "type", "status", "createdAt"]
+      "required": ["cardNumber", "cardHolder", "expiryDate", "cvv", "status"]
     }
   },
   "firestore": {
-    "/users/{uid}": {
+    "/users/{userId}": {
       "schema": "User",
-      "description": "Collection of users indexed by their Auth UID."
+      "description": "User collection"
     },
-    "/users/{uid}/cards/{cardId}": {
+    "/users/{userId}/cards/{cardId}": {
       "schema": "Card",
-      "description": "Subcollection of cards belonging to a specific user."
+      "description": "User's virtual cards"
     },
     "/transactions/{transactionId}": {
       "schema": "Transaction",
-      "description": "Collection of all PIX transactions."
+      "description": "Global transactions collection"
     }
   }
 }
