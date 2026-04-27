@@ -9,6 +9,7 @@ import {
   createUserWithEmailAndPassword, 
   signOut, 
   onAuthStateChanged,
+  updatePassword,
   User as FirebaseUser
 } from 'firebase/auth';
 import { 
@@ -27,6 +28,7 @@ import {
 } from 'firebase/firestore';
 import { auth, db } from './firebase';
 import { motion, AnimatePresence } from 'motion/react';
+import { QRCodeSVG } from 'qrcode.react';
 import { 
   Wallet, 
   Send, 
@@ -40,7 +42,10 @@ import {
   CheckCircle2,
   X,
   CreditCard,
-  History
+  History,
+  QrCode,
+  Copy,
+  Download
 } from 'lucide-react';
 
 // --- Types ---
@@ -48,6 +53,7 @@ interface UserData {
   uid: string;
   nome: string;
   email: string;
+  pixKey: string;
   saldo: number;
   createdAt: any;
   role?: string;
@@ -61,6 +67,17 @@ interface TransactionData {
   recipientName: string;
   amount: number;
   timestamp: any;
+}
+
+interface CardData {
+  id: string;
+  cardNumber: string;
+  expiry: string;
+  cvv: string;
+  holderName: string;
+  type: 'virtual' | 'physical';
+  status: 'active' | 'blocked';
+  createdAt: any;
 }
 
 interface Toast {
@@ -197,8 +214,12 @@ export default function App() {
   const [user, setUser] = useState<FirebaseUser | null>(null);
   const [userData, setUserData] = useState<UserData | null>(null);
   const [transactions, setTransactions] = useState<TransactionData[]>([]);
+  const [cards, setCards] = useState<CardData[]>([]);
   const [loading, setLoading] = useState(true);
   const [view, setView] = useState<'login' | 'register' | 'dashboard' | 'admin'>('login');
+  const [dashboardSection, setDashboardSection] = useState<'main' | 'cards' | 'history' | 'security'>('main');
+  const [isQrModalOpen, setIsQrModalOpen] = useState(false);
+  const [qrAmount, setQrAmount] = useState<string>('');
   const [toasts, setToasts] = useState<Toast[]>([]);
   
   // Admin State
@@ -299,6 +320,23 @@ export default function App() {
     };
   }, [user]);
 
+  // Real-time Cards Listener
+  useEffect(() => {
+    if (!user) {
+      setCards([]);
+      return;
+    }
+
+    const unsubscribe = onSnapshot(collection(db, 'users', user.uid, 'cards'), (snapshot) => {
+      const cardList = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as CardData));
+      setCards(cardList);
+    }, (error) => {
+      handleFirestoreError(error, OperationType.LIST, `users/${user.uid}/cards`);
+    });
+
+    return unsubscribe;
+  }, [user]);
+
   // Admin: Real-time All Users Listener
   useEffect(() => {
     if (!isAdminLoggedIn) return;
@@ -323,7 +361,8 @@ export default function App() {
     
     const formData = new FormData(e.currentTarget);
     const nome = formData.get('nome') as string;
-    const email = formData.get('email') as string;
+    const email = (formData.get('email') as string).toLowerCase().trim();
+    const pixKey = (formData.get('pixKey') as string || email).toLowerCase().trim();
     const senha = formData.get('senha') as string;
     const confirmarSenha = formData.get('confirmarSenha') as string;
 
@@ -333,6 +372,14 @@ export default function App() {
 
     setIsRegistering(true);
     try {
+      // Check if pixKey already exists
+      const qPix = query(collection(db, 'users'), where('pixKey', '==', pixKey));
+      const pixSnap = await getDocs(qPix);
+      if (!pixSnap.empty) {
+        setIsRegistering(false);
+        return showToast('Esta chave PIX já está em uso', 'error');
+      }
+
       const userCredential = await createUserWithEmailAndPassword(auth, email, senha);
       const newUser = userCredential.user;
 
@@ -340,6 +387,7 @@ export default function App() {
         uid: newUser.uid,
         nome,
         email,
+        pixKey,
         saldo: 1000,
         createdAt: serverTimestamp(),
         role: 'user'
@@ -387,7 +435,7 @@ export default function App() {
     if (!userData) return;
 
     const formData = new FormData(e.currentTarget);
-    const destEmail = (formData.get('destEmail') as string).toLowerCase().trim();
+    const destPixKey = (formData.get('destPixKey') as string).toLowerCase().trim();
     const valor = parseFloat(formData.get('valor') as string);
 
     if (isNaN(valor) || valor <= 0) {
@@ -398,17 +446,23 @@ export default function App() {
       return showToast('Saldo insuficiente', 'error');
     }
 
-    if (destEmail === userData.email) {
+    if (destPixKey === userData.pixKey || destPixKey === userData.email) {
       return showToast('Você não pode enviar PIX para si mesmo', 'error');
     }
 
     try {
-      // Find recipient
-      const q = query(collection(db, 'users'), where('email', '==', destEmail));
-      const querySnapshot = await getDocs(q);
+      // Find recipient by pixKey or email
+      const q = query(collection(db, 'users'), where('pixKey', '==', destPixKey));
+      let querySnapshot = await getDocs(q);
 
       if (querySnapshot.empty) {
-        return showToast('Destinatário não encontrado', 'error');
+        // Try email if pixKey search fails (legacy or if key is email)
+        const qEmail = query(collection(db, 'users'), where('email', '==', destPixKey));
+        querySnapshot = await getDocs(qEmail);
+      }
+
+      if (querySnapshot.empty) {
+        return showToast('Chave PIX não encontrada', 'error');
       }
 
       const recipientDoc = querySnapshot.docs[0];
@@ -500,6 +554,126 @@ export default function App() {
     } catch (error: any) {
       showToast(error.message, 'error');
     }
+  };
+
+  const handleUpdatePixKey = async (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    if (!userData) return;
+
+    const formData = new FormData(e.currentTarget);
+    const newPixKey = (formData.get('newPixKey') as string).toLowerCase().trim();
+
+    if (!newPixKey) return showToast('A chave PIX não pode ser vazia', 'error');
+
+    try {
+      // Check if pixKey already exists
+      const qPix = query(collection(db, 'users'), where('pixKey', '==', newPixKey));
+      const pixSnap = await getDocs(qPix);
+      
+      if (!pixSnap.empty && pixSnap.docs[0].id !== userData.uid) {
+        return showToast('Esta chave PIX já está em uso por outro usuário', 'error');
+      }
+
+      await updateDoc(doc(db, 'users', userData.uid), { pixKey: newPixKey });
+      showToast('Chave PIX atualizada com sucesso!');
+      (e.target as HTMLFormElement).reset();
+    } catch (error: any) {
+      showToast(error.message, 'error');
+    }
+  };
+
+  const handleCreateCard = async () => {
+    if (!user || !userData) return;
+
+    try {
+      const cardRef = doc(collection(db, 'users', user.uid, 'cards'));
+      const cardNumber = Array.from({ length: 4 }, () => Math.floor(1000 + Math.random() * 9000)).join(' ');
+      const expiry = `${String(Math.floor(Math.random() * 12) + 1).padStart(2, '0')}/${String(new Date().getFullYear() + 4).slice(-2)}`;
+      const cvv = Math.floor(100 + Math.random() * 900).toString();
+
+      await setDoc(cardRef, {
+        cardNumber,
+        expiry,
+        cvv,
+        holderName: userData.nome.toUpperCase(),
+        type: 'virtual',
+        status: 'active',
+        createdAt: serverTimestamp()
+      });
+
+      showToast('Cartão virtual gerado com sucesso!');
+    } catch (error: any) {
+      showToast(error.message, 'error');
+    }
+  };
+
+  const handleUpdatePassword = async (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    if (!user) return;
+
+    const formData = new FormData(e.currentTarget);
+    const novaSenha = formData.get('novaSenha') as string;
+    const confirmarNovaSenha = formData.get('confirmarNovaSenha') as string;
+
+    if (novaSenha !== confirmarNovaSenha) {
+      return showToast('As senhas não coincidem', 'error');
+    }
+
+    if (novaSenha.length < 6) {
+      return showToast('A senha deve ter pelo menos 6 caracteres', 'error');
+    }
+
+    try {
+      await updatePassword(user, novaSenha);
+      showToast('Senha atualizada com sucesso!');
+      (e.target as HTMLFormElement).reset();
+    } catch (error: any) {
+      if (error.code === 'auth/requires-recent-login') {
+        showToast('Para alterar a senha, você precisa ter feito login recentemente. Refaça o login.', 'error');
+      } else {
+        showToast(error.message, 'error');
+      }
+    }
+  };
+
+  const toggleCardStatus = async (cardId: string, currentStatus: string) => {
+    if (!user) return;
+    try {
+      await updateDoc(doc(db, 'users', user.uid, 'cards', cardId), {
+        status: currentStatus === 'active' ? 'blocked' : 'active'
+      });
+      showToast(currentStatus === 'active' ? 'Cartão bloqueado' : 'Cartão desbloqueado');
+    } catch (error: any) {
+      showToast(error.message, 'error');
+    }
+  };
+
+  const getPixPayload = (key: string, name: string, amount?: number) => {
+    const cleanName = name.normalize("NFD").replace(/[\u0300-\u036f]/g, "").slice(0, 25);
+    const accountInfo = `0014br.gov.bcb.pix01${key.length.toString().padStart(2, '0')}${key}`;
+    const payload = [
+      '000201',
+      `26${accountInfo.length.toString().padStart(2, '0')}${accountInfo}`,
+      '52040000',
+      '5303986',
+      amount ? `54${amount.toFixed(2).length.toString().padStart(2, '0')}${amount.toFixed(2)}` : '',
+      '5802BR',
+      `59${cleanName.length.toString().padStart(2, '0')}${cleanName.toUpperCase()}`,
+      '6008BRASILIA',
+      '62070503***',
+    ].join('');
+
+    const crcPart = payload + '6304';
+    let crc = 0xFFFF;
+    for (let i = 0; i < crcPart.length; i++) {
+      crc ^= crcPart.charCodeAt(i) << 8;
+      for (let j = 0; j < 8; j++) {
+        if (crc & 0x8000) crc = (crc << 1) ^ 0x1021;
+        else crc <<= 1;
+      }
+    }
+    const crcHex = (crc & 0xFFFF).toString(16).toUpperCase().padStart(4, '0');
+    return crcPart + crcHex;
   };
 
   if (loading) {
@@ -636,6 +810,15 @@ export default function App() {
                     />
                   </div>
                   <div>
+                    <label className="block text-sm font-medium text-white/80 mb-1">Chave PIX (Opcional)</label>
+                    <input 
+                      name="pixKey" 
+                      type="text" 
+                      className="w-full px-4 py-3 rounded-xl bg-white/10 border border-white/20 text-white placeholder:text-white/40 focus:ring-2 focus:ring-white/30 outline-none transition-all"
+                      placeholder="seu-pix-personalizado"
+                    />
+                  </div>
+                  <div>
                     <label className="block text-sm font-medium text-white/80 mb-1">Senha</label>
                     <input 
                       name="senha" 
@@ -682,133 +865,412 @@ export default function App() {
                 animate={{ opacity: 1 }}
                 className="space-y-6"
               >
-                {/* Welcome Card */}
-                <div className="bg-white/10 backdrop-blur-2xl p-6 rounded-[24px] border border-white/20 flex flex-col md:flex-row md:items-center justify-between gap-4 shadow-xl">
-                  <div className="flex items-center gap-4">
-                    <div className="w-12 h-12 bg-white/20 rounded-full flex items-center justify-center text-white">
-                      <User size={24} />
+                {/* Welcome Card & Navigation */}
+                <div className="space-y-4">
+                  <div className="bg-white/10 backdrop-blur-2xl p-6 rounded-[24px] border border-white/20 flex flex-col md:flex-row md:items-center justify-between gap-4 shadow-xl">
+                    <div className="flex items-center gap-4">
+                      <div className="w-12 h-12 bg-white/20 rounded-full flex items-center justify-center text-white cursor-pointer hover:bg-white/30 transition-all" onClick={() => setDashboardSection('main')}>
+                        <User size={24} />
+                      </div>
+                      <div>
+                        <p className="text-sm text-white/60 font-medium">Olá,</p>
+                        <h2 className="text-xl font-bold text-white">{userData.nome}</h2>
+                        <p className="text-xs text-white/50 font-mono mt-1">Sua chave PIX: <span className="text-white/80">{userData.pixKey}</span></p>
+                      </div>
                     </div>
-                    <div>
-                      <p className="text-sm text-white/60 font-medium">Olá,</p>
-                      <h2 className="text-xl font-bold text-white">{userData.nome}</h2>
+                    <div className="bg-white/15 p-4 rounded-xl border border-white/20">
+                      <p className="text-xs text-white/60 font-bold uppercase tracking-wider mb-1">Saldo Disponível</p>
+                      <p className="text-4xl font-black text-white">
+                        R$ {userData.saldo.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                      </p>
                     </div>
                   </div>
-                  <div className="bg-white/15 p-4 rounded-xl border border-white/20">
-                    <p className="text-xs text-white/60 font-bold uppercase tracking-wider mb-1">Saldo Disponível</p>
-                    <p className="text-4xl font-black text-white">
-                      R$ {userData.saldo.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
-                    </p>
-                  </div>
-                </div>
 
-                {/* PIX Form */}
-                <div className="bg-white/10 backdrop-blur-2xl p-8 rounded-[24px] border border-white/20 shadow-xl">
-                  <div className="flex items-center gap-3 mb-6">
-                    <div className="p-2 bg-white text-[#764ba2] rounded-lg">
-                      <Send size={20} />
-                    </div>
-                    <h3 className="text-xl font-bold text-white">Enviar PIX</h3>
-                  </div>
-                  <form onSubmit={handlePix} className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <div className="md:col-span-1">
-                      <label className="block text-sm font-medium text-white/80 mb-1">Email do Destinatário</label>
-                      <input 
-                        name="destEmail" 
-                        type="email" 
-                        required 
-                        className="w-full px-4 py-3 rounded-xl bg-white/10 border border-white/20 text-white placeholder:text-white/40 focus:ring-2 focus:ring-white/30 outline-none transition-all"
-                        placeholder="amigo@email.com"
-                      />
-                    </div>
-                    <div className="md:col-span-1">
-                      <label className="block text-sm font-medium text-white/80 mb-1">Valor (R$)</label>
-                      <input 
-                        name="valor" 
-                        type="number" 
-                        step="0.01"
-                        required 
-                        className="w-full px-4 py-3 rounded-xl bg-white/10 border border-white/20 text-white placeholder:text-white/40 focus:ring-2 focus:ring-white/30 outline-none transition-all"
-                        placeholder="0,00"
-                      />
-                    </div>
-                    <div className="md:col-span-2">
+                    <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
                       <button 
-                        type="submit"
-                        className="w-full bg-white text-[#764ba2] font-bold py-4 rounded-xl shadow-xl transition-all transform active:scale-95 flex items-center justify-center gap-2 hover:bg-white/90"
+                        onClick={() => setDashboardSection('main')}
+                        className={`p-4 rounded-2xl border transition-all flex flex-col items-center gap-2 ${dashboardSection === 'main' ? 'bg-white text-[#764ba2] border-white' : 'bg-white/5 text-white border-white/10 hover:bg-white/10'}`}
                       >
-                        <ArrowRightLeft size={20} />
-                        Confirmar Transferência
+                        <Send size={20} />
+                        <span className="text-[10px] font-bold uppercase tracking-widest">Início</span>
+                      </button>
+                      <button 
+                        onClick={() => setIsQrModalOpen(true)}
+                        className={`p-4 rounded-2xl border transition-all flex flex-col items-center gap-2 bg-white/5 text-white border-white/10 hover:bg-white/10`}
+                      >
+                        <QrCode size={20} />
+                        <span className="text-[10px] font-bold uppercase tracking-widest">Receber</span>
+                      </button>
+                      <button 
+                        onClick={() => setDashboardSection('history')}
+                        className={`p-4 rounded-2xl border transition-all flex flex-col items-center gap-2 ${dashboardSection === 'history' ? 'bg-white text-[#764ba2] border-white' : 'bg-white/5 text-white border-white/10 hover:bg-white/10'}`}
+                      >
+                        <History size={20} />
+                        <span className="text-[10px] font-bold uppercase tracking-widest">Extrato</span>
+                      </button>
+                      <button 
+                        onClick={() => setDashboardSection('cards')}
+                        className={`p-4 rounded-2xl border transition-all flex flex-col items-center gap-2 ${dashboardSection === 'cards' ? 'bg-white text-[#764ba2] border-white' : 'bg-white/5 text-white border-white/10 hover:bg-white/10'}`}
+                      >
+                        <CreditCard size={20} />
+                        <span className="text-[10px] font-bold uppercase tracking-widest">Cartões</span>
+                      </button>
+                      <button 
+                        onClick={() => setDashboardSection('security')}
+                        className={`p-4 rounded-2xl border transition-all flex flex-col items-center gap-2 ${dashboardSection === 'security' ? 'bg-white text-[#764ba2] border-white' : 'bg-white/5 text-white border-white/10 hover:bg-white/10'}`}
+                      >
+                        <Shield size={20} />
+                        <span className="text-[10px] font-bold uppercase tracking-widest">Segurança</span>
                       </button>
                     </div>
-                  </form>
                 </div>
 
-                {/* Info Cards */}
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                  <div className="bg-white/10 backdrop-blur-xl p-4 rounded-xl border border-white/20 flex items-center gap-3 hover:bg-white/20 transition-all cursor-pointer">
-                    <div className="p-2 bg-white/10 text-white rounded-lg"><Wallet size={20} /></div>
-                    <div>
-                      <p className="text-xs text-white/50">Cartões</p>
-                      <p className="text-sm font-bold">Gerenciar</p>
-                    </div>
-                  </div>
-                  <div className="bg-white/10 backdrop-blur-xl p-4 rounded-xl border border-white/20 flex items-center gap-3 hover:bg-white/20 transition-all cursor-pointer">
-                    <div className="p-2 bg-white/10 text-white rounded-lg"><History size={20} /></div>
-                    <div>
-                      <p className="text-xs text-white/50">Extrato</p>
-                      <p className="text-sm font-bold">Ver histórico</p>
-                    </div>
-                  </div>
-                  <div className="bg-white/10 backdrop-blur-xl p-4 rounded-xl border border-white/20 flex items-center gap-3 hover:bg-white/20 transition-all cursor-pointer">
-                    <div className="p-2 bg-white/10 text-white rounded-lg"><Shield size={20} /></div>
-                    <div>
-                      <p className="text-xs text-white/50">Segurança</p>
-                      <p className="text-sm font-bold">Configurar</p>
-                    </div>
-                  </div>
-                </div>
+                <AnimatePresence mode="wait">
+                  {/* MAIN SECTION (PIX) */}
+                  {dashboardSection === 'main' && (
+                    <motion.div
+                      key="section-main"
+                      initial={{ opacity: 0, y: 10 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      exit={{ opacity: 0, y: -10 }}
+                      className="space-y-6"
+                    >
+                      {/* PIX Form */}
+                      <div className="bg-white/10 backdrop-blur-2xl p-8 rounded-[24px] border border-white/20 shadow-xl text-white">
+                        <div className="flex items-center gap-3 mb-6">
+                          <div className="p-2 bg-white text-[#764ba2] rounded-lg">
+                            <Send size={20} />
+                          </div>
+                          <h3 className="text-xl font-bold">Enviar PIX</h3>
+                        </div>
+                        <form onSubmit={handlePix} className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                          <div className="md:col-span-1">
+                            <label className="block text-sm font-medium text-white/80 mb-1">Chave PIX do Destinatário</label>
+                            <input 
+                              name="destPixKey" 
+                              type="text" 
+                              required 
+                              className="w-full px-4 py-3 rounded-xl bg-white/10 border border-white/20 text-white placeholder:text-white/40 focus:ring-2 focus:ring-white/30 outline-none transition-all"
+                              placeholder="email ou chave personalizada"
+                            />
+                          </div>
+                          <div className="md:col-span-1">
+                            <label className="block text-sm font-medium text-white/80 mb-1">Valor (R$)</label>
+                            <input 
+                              name="valor" 
+                              type="number" 
+                              step="0.01"
+                              required 
+                              className="w-full px-4 py-3 rounded-xl bg-white/10 border border-white/20 text-white placeholder:text-white/40 focus:ring-2 focus:ring-white/30 outline-none transition-all"
+                              placeholder="0,00"
+                            />
+                          </div>
+                          <div className="md:col-span-2">
+                            <button 
+                              type="submit"
+                              className="w-full bg-white text-[#764ba2] font-bold py-4 rounded-xl shadow-xl transition-all transform active:scale-95 flex items-center justify-center gap-2 hover:bg-white/90"
+                            >
+                              <ArrowRightLeft size={20} />
+                              Confirmar Transferência
+                            </button>
+                          </div>
+                        </form>
+                      </div>
 
-                {/* Transaction History */}
-                <div className="bg-white/10 backdrop-blur-2xl p-8 rounded-[24px] border border-white/20 shadow-xl">
-                  <div className="flex items-center gap-3 mb-6">
-                    <div className="p-2 bg-white text-[#764ba2] rounded-lg">
-                      <History size={20} />
-                    </div>
-                    <h3 className="text-xl font-bold text-white">Histórico de Transações</h3>
-                  </div>
-                  
-                  {transactions.length === 0 ? (
-                    <div className="text-center py-8 text-white/40 italic">
-                      Nenhuma transação encontrada.
-                    </div>
-                  ) : (
-                    <div className="space-y-4">
-                      {transactions.map((tx) => {
-                        const isSender = tx.senderUid === user?.uid;
-                        return (
-                          <div key={tx.id} className="flex items-center justify-between p-4 bg-white/5 rounded-xl border border-white/10 hover:bg-white/10 transition-all">
-                            <div className="flex items-center gap-4">
-                              <div className={`p-2 rounded-full ${isSender ? 'bg-red-500/20 text-red-300' : 'bg-green-500/20 text-green-300'}`}>
-                                {isSender ? <Send size={18} /> : <Plus size={18} />}
+                      {/* Your Info Card */}
+                      <div className="bg-white/10 backdrop-blur-xl p-6 rounded-2xl border border-white/20 flex flex-col md:flex-row items-center justify-between gap-6">
+                        <div className="flex items-center gap-4">
+                          <div className="p-3 bg-white/10 rounded-xl text-white"><CheckCircle2 size={32} /></div>
+                          <div>
+                            <h4 className="font-bold text-lg">Sua chave PIX está ativa</h4>
+                            <p className="text-sm text-white/60">Receba pagamentos instantâneos usando sua chave: <span className="text-white font-mono">{userData.pixKey}</span></p>
+                          </div>
+                        </div>
+                        <form onSubmit={handleUpdatePixKey} className="flex gap-2 w-full md:w-auto">
+                          <input 
+                            name="newPixKey" 
+                            type="text" 
+                            placeholder="Mudar chave"
+                            className="bg-white/5 border border-white/10 px-4 py-2 rounded-xl text-sm text-white outline-none focus:ring-2 focus:ring-white/30 flex-1"
+                          />
+                          <button type="submit" className="bg-white/10 hover:bg-white/20 border border-white/20 px-4 py-2 rounded-xl text-xs font-bold transition-all">Alterar</button>
+                        </form>
+                      </div>
+
+                      {/* Recent Activities */}
+                      <div className="bg-white/10 backdrop-blur-2xl p-6 rounded-[24px] border border-white/20 shadow-xl">
+                        <div className="flex items-center justify-between mb-4">
+                          <h3 className="font-bold flex items-center gap-2">
+                            <History size={18} />
+                            Transações Recentes
+                          </h3>
+                          <button onClick={() => setDashboardSection('history')} className="text-xs text-white/60 hover:text-white underline">Ver tudo</button>
+                        </div>
+                        <div className="space-y-3">
+                          {transactions.slice(0, 3).map((tx) => {
+                            const isSender = tx.senderUid === user?.uid;
+                            return (
+                              <div key={tx.id} className="flex items-center justify-between p-3 bg-white/5 rounded-xl border border-white/5">
+                                <div className="flex items-center gap-3">
+                                  <div className={`p-1.5 rounded-full ${isSender ? 'bg-red-500/20 text-red-300' : 'bg-green-500/20 text-green-300'}`}>
+                                    {isSender ? <Send size={14} /> : <Plus size={14} />}
+                                  </div>
+                                  <div>
+                                    <p className="text-sm font-bold truncate max-w-[150px]">{isSender ? `Para: ${tx.recipientName}` : `De: ${tx.senderName}`}</p>
+                                    <p className="text-[10px] text-white/40">{tx.timestamp?.toDate ? tx.timestamp.toDate().toLocaleDateString('pt-BR') : 'Processando...'}</p>
+                                  </div>
+                                </div>
+                                <div className={`text-sm font-bold ${isSender ? 'text-red-300' : 'text-green-300'}`}>
+                                  {isSender ? '-' : '+'} R$ {tx.amount.toFixed(2)}
+                                </div>
                               </div>
-                              <div>
-                                <p className="font-bold text-white">
-                                  {isSender ? `Para: ${tx.recipientName}` : `De: ${tx.senderName}`}
-                                </p>
-                                <p className="text-xs text-white/50">
-                                  {tx.timestamp?.toDate ? tx.timestamp.toDate().toLocaleString('pt-BR') : 'Processando...'}
-                                </p>
+                            );
+                          })}
+                          {transactions.length === 0 && <p className="text-center py-4 text-white/30 italic text-sm">Nenhuma movimentação</p>}
+                        </div>
+                      </div>
+                    </motion.div>
+                  )}
+
+                  {/* HISTORY SECTION */}
+                  {dashboardSection === 'history' && (
+                    <motion.div
+                      key="section-history"
+                      initial={{ opacity: 0, x: 20 }}
+                      animate={{ opacity: 1, x: 0 }}
+                      exit={{ opacity: 0, x: -20 }}
+                      className="bg-white/10 backdrop-blur-2xl p-8 rounded-[24px] border border-white/20 shadow-xl"
+                    >
+                      <div className="flex items-center gap-3 mb-6">
+                        <div className="p-2 bg-white text-[#764ba2] rounded-lg">
+                          <History size={20} />
+                        </div>
+                        <h3 className="text-xl font-bold">Extrato Completo</h3>
+                      </div>
+                      
+                      {transactions.length === 0 ? (
+                        <div className="text-center py-20 text-white/40 italic">
+                          <History size={48} className="mx-auto mb-4 opacity-20" />
+                          <p>Você ainda não realizou transações.</p>
+                        </div>
+                      ) : (
+                        <div className="space-y-4 max-h-[60vh] overflow-y-auto pr-2 custom-scrollbar">
+                          {transactions.map((tx) => {
+                            const isSender = tx.senderUid === user?.uid;
+                            return (
+                              <div key={tx.id} className="flex items-center justify-between p-4 bg-white/5 rounded-xl border border-white/10 hover:bg-white/10 transition-all">
+                                <div className="flex items-center gap-4">
+                                  <div className={`p-2 rounded-full ${isSender ? 'bg-red-500/20 text-red-300' : 'bg-green-500/20 text-green-300'}`}>
+                                    {isSender ? <Send size={18} /> : <Plus size={18} />}
+                                  </div>
+                                  <div>
+                                    <p className="font-bold">
+                                      {isSender ? `PIX Enviado para ${tx.recipientName}` : `PIX Recebido de ${tx.senderName}`}
+                                    </p>
+                                    <p className="text-xs text-white/50">
+                                      {tx.timestamp?.toDate ? tx.timestamp.toDate().toLocaleString('pt-BR') : 'Processando...'}
+                                    </p>
+                                  </div>
+                                </div>
+                                <div className={`font-bold text-lg ${isSender ? 'text-red-300' : 'text-green-300'}`}>
+                                  {isSender ? '-' : '+'} R$ {tx.amount.toFixed(2)}
+                                </div>
                               </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </motion.div>
+                  )}
+
+                  {/* CARDS SECTION */}
+                  {dashboardSection === 'cards' && (
+                    <motion.div
+                      key="section-cards"
+                      initial={{ opacity: 0, x: 20 }}
+                      animate={{ opacity: 1, x: 0 }}
+                      exit={{ opacity: 0, x: -20 }}
+                      className="space-y-6"
+                    >
+                      <div className="bg-white/10 backdrop-blur-2xl p-8 rounded-[24px] border border-white/20 shadow-xl">
+                        <div className="flex items-center justify-between mb-8">
+                          <div className="flex items-center gap-3">
+                            <div className="p-2 bg-white text-[#764ba2] rounded-lg">
+                              <CreditCard size={20} />
                             </div>
-                            <div className={`font-bold ${isSender ? 'text-red-300' : 'text-green-300'}`}>
-                              {isSender ? '-' : '+'} R$ {tx.amount.toFixed(2)}
+                            <h3 className="text-xl font-bold">Seus Cartões</h3>
+                          </div>
+                          <button 
+                            onClick={handleCreateCard}
+                            className="bg-white text-[#764ba2] px-4 py-2 rounded-xl text-xs font-black uppercase tracking-wider flex items-center gap-2 hover:bg-white/90 transition-all shadow-lg active:scale-95"
+                          >
+                            <Plus size={16} />
+                            Gerar Cartão Virtual
+                          </button>
+                        </div>
+
+                        {cards.length === 0 ? (
+                          <div className="text-center py-16 text-white/40 bg-white/5 rounded-3xl border border-dashed border-white/10">
+                            <CreditCard size={48} className="mx-auto mb-4 opacity-20" />
+                            <p>Você não possui cartões virtuais gerados.</p>
+                            <p className="text-xs mt-2">Clique no botão acima para criar o seu primeiro!</p>
+                          </div>
+                        ) : (
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                            {cards.map((card) => (
+                              <motion.div 
+                                initial={{ scale: 0.9, opacity: 0 }}
+                                animate={{ scale: 1, opacity: 1 }}
+                                key={card.id} 
+                                className={`relative h-56 rounded-2xl p-6 shadow-2xl flex flex-col justify-between overflow-hidden group border border-white/20 ${card.status === 'blocked' ? 'grayscale opacity-60' : ''}`}
+                                style={{ background: 'linear-gradient(135deg, rgba(255,255,255,0.1) 0%, rgba(255,255,255,0.05) 100%)' }}
+                              >
+                                {/* Decorative elements */}
+                                <div className="absolute -top-10 -right-10 w-40 h-40 bg-white/10 rounded-full blur-3xl group-hover:bg-white/20 transition-all"></div>
+                                <div className="absolute -bottom-10 -left-10 w-40 h-40 bg-purple-500/10 rounded-full blur-3xl group-hover:bg-purple-500/20 transition-all"></div>
+
+                                <div className="flex justify-between items-start">
+                                  <div className="flex flex-col gap-1">
+                                    <p className="text-[10px] font-black uppercase tracking-[0.2em] text-white/60">FrontBank Platinum</p>
+                                    <div className="w-10 h-8 bg-yellow-500/80 rounded-md shadow-inner flex items-center justify-center">
+                                      <div className="w-6 h-4 border border-black/20 rounded-sm"></div>
+                                    </div>
+                                  </div>
+                                  <div className="flex flex-col items-end gap-2">
+                                    <button 
+                                      onClick={() => toggleCardStatus(card.id, card.status)}
+                                      className={`text-[10px] px-3 py-1 rounded-full font-bold uppercase tracking-wider border transition-all ${card.status === 'active' ? 'bg-green-500/20 border-green-500/40 text-green-300 hover:bg-red-500/20 hover:border-red-500/40 hover:text-red-300' : 'bg-red-500/20 border-red-500/40 text-red-300 hover:bg-green-500/20 hover:border-green-500/40 hover:text-green-300'}`}
+                                    >
+                                      {card.status === 'active' ? 'Bloquear' : 'Desbloquear'}
+                                    </button>
+                                    <p className="text-lg font-black italic opacity-40">Virtual</p>
+                                  </div>
+                                </div>
+
+                                <div>
+                                  <p className="text-xl font-mono tracking-widest text-shadow mb-4">{card.cardNumber}</p>
+                                  <div className="flex gap-8 text-[10px]">
+                                    <div>
+                                      <p className="text-white/40 uppercase tracking-tighter mb-0.5">Vencimento</p>
+                                      <p className="font-bold tracking-widest">{card.expiry}</p>
+                                    </div>
+                                    <div>
+                                      <p className="text-white/40 uppercase tracking-tighter mb-0.5">CVV</p>
+                                      <p className="font-bold tracking-widest">{card.cvv}</p>
+                                    </div>
+                                  </div>
+                                </div>
+
+                                <div className="flex justify-between items-end">
+                                  <p className="text-xs font-bold uppercase tracking-widest">{card.holderName}</p>
+                                  <div className="flex gap-1">
+                                    <div className="w-6 h-6 bg-red-500/80 rounded-full"></div>
+                                    <div className="w-6 h-6 bg-yellow-500/80 rounded-full -ml-3"></div>
+                                  </div>
+                                </div>
+                              </motion.div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                      <div className="bg-white/5 p-4 rounded-xl border border-white/10 text-white/50 text-xs flex items-center gap-3">
+                        <AlertCircle size={16} />
+                        <p>Os cartões virtuais são para uso exclusivo em compras online. Você pode gerar quantos precisar e bloqueá-los a qualquer momento.</p>
+                      </div>
+                    </motion.div>
+                  )}
+
+                  {/* SECURITY SECTION */}
+                  {dashboardSection === 'security' && (
+                    <motion.div
+                      key="section-security"
+                      initial={{ opacity: 0, x: 20 }}
+                      animate={{ opacity: 1, x: 0 }}
+                      exit={{ opacity: 0, x: -20 }}
+                      className="space-y-6"
+                    >
+                      <div className="bg-white/10 backdrop-blur-2xl p-8 rounded-[24px] border border-white/20 shadow-xl">
+                        <div className="flex items-center gap-3 mb-8">
+                          <div className="p-2 bg-white text-[#764ba2] rounded-lg">
+                            <Shield size={20} />
+                          </div>
+                          <h3 className="text-xl font-bold">Segurança da Conta</h3>
+                        </div>
+
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-12">
+                          <div className="space-y-6">
+                            <div>
+                              <h4 className="font-bold mb-2 flex items-center gap-2">
+                                <CheckCircle2 size={16} className="text-green-400" />
+                                Proteção de Acesso
+                              </h4>
+                              <p className="text-sm text-white/60">Sua conta está protegida por criptografia de ponta a ponta e autenticação segura do Google Firebase.</p>
+                            </div>
+                            <div className="p-4 bg-white/5 rounded-xl border border-white/10 space-y-3">
+                              <p className="text-xs font-bold uppercase tracking-widest text-white/60">Dados de Acesso</p>
+                              <div className="flex justify-between items-center text-sm">
+                                <span className="text-white/40">Email:</span>
+                                <span className="font-mono">{userData.email}</span>
+                              </div>
+                              <div className="flex justify-between items-center text-sm">
+                                <span className="text-white/40">ID do Cliente:</span>
+                                <span className="font-mono text-[10px] opacity-60">#{userData.uid.slice(0, 10)}...</span>
+                              </div>
                             </div>
                           </div>
-                        );
-                      })}
-                    </div>
+
+                          <div className="bg-white/5 p-6 rounded-2xl border border-white/10">
+                            <h4 className="font-bold mb-4">Alterar Senha</h4>
+                            <form onSubmit={handleUpdatePassword} className="space-y-4">
+                              <div>
+                                <label className="block text-[10px] font-black uppercase tracking-widest text-white/40 mb-1">Nova Senha</label>
+                                <input 
+                                  name="novaSenha" 
+                                  type="password" 
+                                  required 
+                                  className="w-full px-4 py-2 rounded-xl bg-white/5 border border-white/10 text-white outline-none focus:ring-2 focus:ring-white/30 text-sm"
+                                  placeholder="••••••••"
+                                />
+                              </div>
+                              <div>
+                                <label className="block text-[10px] font-black uppercase tracking-widest text-white/40 mb-1">Confirmar Nova Senha</label>
+                                <input 
+                                  name="confirmarNovaSenha" 
+                                  type="password" 
+                                  required 
+                                  className="w-full px-4 py-2 rounded-xl bg-white/5 border border-white/10 text-white outline-none focus:ring-2 focus:ring-white/30 text-sm"
+                                  placeholder="••••••••"
+                                />
+                              </div>
+                              <button 
+                                type="submit"
+                                className="w-full bg-white/10 hover:bg-white/20 border border-white/20 text-white font-bold py-2 rounded-xl transition-all shadow-xl active:scale-95 text-sm"
+                              >
+                                Atualizar Senha
+                              </button>
+                            </form>
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="bg-red-500/10 backdrop-blur-xl p-8 rounded-[24px] border border-red-500/20 shadow-xl flex flex-col md:flex-row items-center justify-between gap-6">
+                        <div className="flex items-center gap-4">
+                          <div className="p-3 bg-red-500/20 rounded-xl text-red-300"><AlertCircle size={32} /></div>
+                          <div>
+                            <h4 className="font-bold text-lg text-red-200">Área Crítica</h4>
+                            <p className="text-sm text-red-200/60">Ao encerrar sua sessão ou trocar de senha, certifique-se de ter seus acessos salvos.</p>
+                          </div>
+                        </div>
+                        <button 
+                          onClick={handleLogout}
+                          className="bg-red-500/20 hover:bg-red-500/40 border border-red-500/40 text-red-200 px-6 py-3 rounded-xl font-bold transition-all whitespace-nowrap"
+                        >
+                          Sair da Conta
+                        </button>
+                      </div>
+                    </motion.div>
                   )}
-                </div>
+                </AnimatePresence>
               </motion.div>
             ) : (
               <div className="flex flex-col items-center justify-center py-20 bg-white/10 backdrop-blur-md rounded-3xl border border-white/20">
@@ -963,6 +1425,75 @@ export default function App() {
         <p>© 2026 FrontBank08 - Sistema Bancário Fictício</p>
         <p className="mt-1">Desenvolvido com design Frosted Glass</p>
       </footer>
+        {/* QR Code Modal */}
+        <AnimatePresence>
+          {isQrModalOpen && userData && (
+            <motion.div 
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm"
+            >
+              <motion.div 
+                initial={{ scale: 0.9, y: 20 }}
+                animate={{ scale: 1, y: 0 }}
+                exit={{ scale: 0.9, y: 20 }}
+                className="bg-[#1a1a2e] w-full max-w-sm rounded-[32px] p-8 border border-white/10 shadow-2xl relative"
+              >
+                <button 
+                  onClick={() => setIsQrModalOpen(false)}
+                  className="absolute top-6 right-6 text-white/40 hover:text-white transition-colors"
+                >
+                  <X size={24} />
+                </button>
+
+                <div className="text-center mb-8">
+                  <div className="w-16 h-16 bg-white/10 rounded-2xl flex items-center justify-center mx-auto mb-4 text-white">
+                    <QrCode size={32} />
+                  </div>
+                  <h3 className="text-2xl font-bold text-white mb-2">Receber PIX</h3>
+                  <p className="text-sm text-white/40">Gere um QR Code para cobrar alguém</p>
+                </div>
+
+                <div className="mb-6 space-y-4">
+                  <div className="bg-white/5 p-4 rounded-2xl border border-white/10">
+                    <label className="block text-[10px] font-black tracking-widest uppercase text-white/40 mb-2 text-center">Valor (Opcional)</label>
+                    <input 
+                      type="number"
+                      value={qrAmount}
+                      onChange={(e) => setQrAmount(e.target.value)}
+                      placeholder="0,00"
+                      className="w-full bg-transparent text-center text-3xl font-black text-white focus:outline-none placeholder:opacity-20"
+                    />
+                  </div>
+                </div>
+
+                <div className="bg-white p-6 rounded-3xl flex items-center justify-center mb-8 shadow-[0_0_40px_rgba(255,255,255,0.1)]">
+                  <QRCodeSVG 
+                    value={getPixPayload(userData.pixKey, userData.nome, qrAmount ? parseFloat(qrAmount) : undefined)} 
+                    size={200}
+                    level="H"
+                  />
+                </div>
+
+                <div className="space-y-4">
+                  <button 
+                    onClick={() => {
+                      const payload = getPixPayload(userData.pixKey, userData.nome, qrAmount ? parseFloat(qrAmount) : undefined);
+                      navigator.clipboard.writeText(payload);
+                      showToast('PIX Copia e Cola copiado!');
+                    }}
+                    className="w-full bg-white text-[#1a1a2e] font-black py-4 rounded-2xl flex items-center justify-center gap-3 active:scale-95 transition-all shadow-xl"
+                  >
+                    <Copy size={20} />
+                    Copiar Código
+                  </button>
+                  <p className="text-[10px] text-center text-white/20 uppercase tracking-[0.2em] font-bold">Chave: {userData.pixKey}</p>
+                </div>
+              </motion.div>
+            </motion.div>
+          )}
+        </AnimatePresence>
       </div>
     </ErrorBoundary>
   );

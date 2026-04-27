@@ -18,6 +18,10 @@
           "format": "email",
           "description": "Email address of the user."
         },
+        "pixKey": {
+          "type": "string",
+          "description": "Custom PIX key of the user."
+        },
         "saldo": {
           "type": "number",
           "description": "Current balance of the user in BRL."
@@ -66,12 +70,32 @@
         }
       },
       "required": ["senderUid", "senderName", "recipientUid", "recipientName", "amount", "timestamp"]
+    },
+    "Card": {
+      "title": "Card",
+      "description": "Represents a virtual or physical bank card.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "cardNumber": { "type": "string" },
+        "expiry": { "type": "string" },
+        "cvv": { "type": "string" },
+        "holderName": { "type": "string" },
+        "type": { "type": "string", "enum": ["virtual", "physical"] },
+        "status": { "type": "string", "enum": ["active", "blocked"] },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["cardNumber", "expiry", "cvv", "holderName", "type", "status", "createdAt"]
     }
   },
   "firestore": {
     "/users/{uid}": {
       "schema": "User",
       "description": "Collection of users indexed by their Auth UID."
+    },
+    "/users/{uid}/cards/{cardId}": {
+      "schema": "Card",
+      "description": "Subcollection of cards belonging to a specific user."
     },
     "/transactions/{transactionId}": {
       "schema": "Transaction",
