@@ -853,19 +853,18 @@ export default function App() {
         const currentData = userDoc.data() as UserData;
         const currentBalance = currentData.saldo;
         
-        const balanceField = investCrypto === 'BTC' ? 'btcBalance' : (investCrypto === 'ETH' ? 'ethBalance' : 'solBalance');
-        const currentCryptoBalance = (currentData as any)[balanceField] || 0;
+        const balanceField = (investCrypto === 'BTC' ? 'btcBalance' : (investCrypto === 'ETH' ? 'ethBalance' : 'solBalance')) as keyof UserData;
+        const currentCryptoBalance = Number(currentData[balanceField] || 0);
 
         if (investAction === 'buy') {
-          if (currentBalance < amount) throw new Error('Saldo insuficiente');
+          if (currentBalance < amount) throw new Error('Saldo insuficiente para completar esta ordem');
           
           const coinToReceive = amount / cryptoPrice;
-          transaction.update(userRef, {
+          transaction.set(userRef, {
             saldo: currentBalance - amount,
             [balanceField]: currentCryptoBalance + coinToReceive
-          });
+          }, { merge: true });
 
-          // Transaction log
           const transRef = doc(collection(db, 'transactions'));
           transaction.set(transRef, {
             from: userData.uid,
@@ -882,16 +881,17 @@ export default function App() {
             timestamp: serverTimestamp()
           });
         } else {
-          // Sell
           const coinToSell = amount / cryptoPrice;
-          if (currentCryptoBalance < coinToSell) throw new Error(`${investCrypto} insuficiente`);
+          // Hardened check: compare with a small epsilon or strictly
+          if (currentCryptoBalance < coinToSell) {
+            throw new Error(`Saldo de ${investCrypto} insuficiente. Você possui ${currentCryptoBalance.toFixed(8)} ${investCrypto} e tentou vender o equivalente a ${coinToSell.toFixed(8)} ${investCrypto}`);
+          }
 
-          transaction.update(userRef, {
+          transaction.set(userRef, {
             saldo: currentBalance + amount,
             [balanceField]: currentCryptoBalance - coinToSell
-          });
+          }, { merge: true });
 
-          // Transaction log
           const transRef = doc(collection(db, 'transactions'));
           transaction.set(transRef, {
             from: 'CRYPTO_EXCHANGE',
@@ -1895,13 +1895,28 @@ export default function App() {
                                   </div>
                                 </div>
                                 <form onSubmit={handleBitcoinTrade} className="bg-white/5 p-10 rounded-[40px] border border-white/10 space-y-8">
-                                  <div className="space-y-4">
-                                    <label className="text-[10px] font-black text-white/40 uppercase tracking-[0.3em] block ml-2">Montante da Operação</label>
-                                    <div className="relative">
-                                      <input type="number" value={investAmount} onChange={(e) => setInvestAmount(e.target.value)} placeholder="0.00" className="w-full bg-black/60 border-2 border-white/10 rounded-[28px] py-6 px-8 text-3xl font-black text-white outline-none focus:border-orange-500 transition-all placeholder:text-white/5" />
-                                      <span className="absolute right-8 top-1/2 -translate-y-1/2 font-black text-orange-500/40 text-xl">BRL</span>
-                                    </div>
-                                  </div>
+                                   <div className="space-y-4">
+                                     <div className="flex items-center justify-between px-2">
+                                       <label className="text-[10px] font-black text-white/40 uppercase tracking-[0.3em] block">
+                                         {investAction === 'buy' ? 'Quanto quer investir?' : 'Quanto quer resgatar?'}
+                                       </label>
+                                       {investAmount && cryptoPrice && (
+                                         <p className="text-[10px] font-black text-orange-500 uppercase tracking-widest animate-pulse">
+                                           ≈ {(parseFloat(investAmount) / cryptoPrice).toFixed(8)} {investCrypto}
+                                         </p>
+                                       )}
+                                     </div>
+                                     <div className="relative">
+                                       <input 
+                                         type="number" 
+                                         value={investAmount} 
+                                         onChange={(e) => setInvestAmount(e.target.value)} 
+                                         placeholder="0.00" 
+                                         className="w-full bg-black/60 border-2 border-white/10 rounded-[28px] py-6 px-8 text-3xl font-black text-white outline-none focus:border-orange-500 transition-all placeholder:text-white/5" 
+                                       />
+                                       <span className="absolute right-8 top-1/2 -translate-y-1/2 font-black text-orange-500/40 text-xl">BRL</span>
+                                     </div>
+                                   </div>
                                   <button type="submit" className={`w-full py-6 rounded-[28px] font-black text-xl uppercase tracking-[0.2em] transition-all transform active:scale-95 shadow-2xl ${investAction === 'buy' ? 'bg-orange-500 text-black hover:bg-orange-400' : 'bg-red-600 text-white hover:bg-red-500'}`}>
                                     {isInvesting ? 'PROCESSANDO...' : 'EXECUTAR ORDEM'}
                                   </button>
