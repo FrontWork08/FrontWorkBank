@@ -52,7 +52,8 @@ import {
   ArrowDownRight,
   Dices,
   Trophy,
-  Zap
+  Zap,
+  CircleDot
 } from 'lucide-react';
 
 // --- Types ---
@@ -65,6 +66,8 @@ interface UserData {
   createdAt: any;
   role?: string;
   btcBalance?: number;
+  ethBalance?: number;
+  solBalance?: number;
 }
 
 interface TransactionData {
@@ -227,23 +230,47 @@ export default function App() {
   const [view, setView] = useState<'login' | 'register' | 'dashboard' | 'admin'>('login');
   const [dashboardSection, setDashboardSection] = useState<'main' | 'cards' | 'history' | 'security' | 'investments' | 'casino'>('main');
   const [isQrModalOpen, setIsQrModalOpen] = useState(false);
+  const [isNfcModalOpen, setIsNfcModalOpen] = useState(false);
+  const [nfcStep, setNfcStep] = useState<'start' | 'scanning' | 'success' | 'error'>('start');
+  const [nfcAmount, setNfcAmount] = useState<string>('');
+  const [nfcRecipient, setNfcRecipient] = useState<string>('');
+  const [selectedNfcCard, setSelectedNfcCard] = useState<string>('balance');
   const [qrAmount, setQrAmount] = useState<string>('');
   const [toasts, setToasts] = useState<Toast[]>([]);
   
-  // Bitcoin State
-  const [btcPrice, setBtcPrice] = useState<number | null>(null);
-  const [btcHistory, setBtcHistory] = useState<number[]>([]);
-  const [btcChange, setBtcChange] = useState<number>(0);
+  // Crypto State
+  const [cryptoPrice, setCryptoPrice] = useState<number | null>(null);
+  const [cryptoHistory, setCryptoHistory] = useState<number[]>([]);
+  const [cryptoChange, setCryptoChange] = useState<number>(0);
   const [isInvesting, setIsInvesting] = useState(false);
   const [investAction, setInvestAction] = useState<'buy' | 'sell'>('buy');
   const [investAmount, setInvestAmount] = useState<string>('');
-  const [casinoSubTab, setCasinoSubTab] = useState<'bitcoin' | 'lion'>('lion');
+  const [casinoSubTab, setCasinoSubTab] = useState<'lion' | 'bitcoin' | 'crash' | 'double' | 'roulette'>('lion');
+  const [investCrypto, setInvestCrypto] = useState<'BTC' | 'ETH' | 'SOL'>('BTC');
 
   // Lion Game State
   const [betAmount, setBetAmount] = useState<string>('');
   const [isSpinning, setIsSpinning] = useState(false);
   const [slotResult, setSlotResult] = useState<string[]>(['LION', 'LION', 'LION']);
   const [gameMessage, setGameMessage] = useState('FAÇA SUA APOSTA');
+
+  // Crash State
+  const [crashMultiplier, setCrashMultiplier] = useState(1.0);
+  const [crashStatus, setCrashStatus] = useState<'idle' | 'running' | 'crashed' | 'cashed'>('idle');
+  const [crashBet, setCrashBet] = useState<string>('');
+  const [hasCashedOut, setHasCashedOut] = useState(false);
+
+  // Roulette State
+  const [rouletteBetAmount, setRouletteBetAmount] = useState<string>('');
+  const [rouletteSelection, setRouletteSelection] = useState<string | number>('red');
+  const [isRouletteSpinning, setIsRouletteSpinning] = useState(false);
+  const [rouletteResult, setRouletteResult] = useState<number | null>(null);
+  const [rouletteHistory, setRouletteHistory] = useState<number[]>([]);
+  const [doubleBetAmount, setDoubleBetAmount] = useState<string>('');
+  const [doubleColor, setDoubleColor] = useState<'orange' | 'black' | 'gold'>('orange');
+  const [isDoubleSpinning, setIsDoubleSpinning] = useState(false);
+  const [doubleResult, setDoubleResult] = useState<string | null>(null);
+  const [doubleHistory, setDoubleHistory] = useState<string[]>([]);
 
   const renderSlotSymbol = (symbol: string) => {
     switch (symbol) {
@@ -288,32 +315,38 @@ export default function App() {
     setToasts((prev) => prev.filter((t) => t.id !== id));
   };
 
-  // Fetch Bitcoin Price
+  // Fetch Crypto Price
   useEffect(() => {
-    const fetchBtcPrice = async () => {
+    const fetchPrice = async () => {
       try {
-        const response = await fetch('https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=brl&include_24hr_change=true');
+        const coinMap: {[key: string]: string} = {
+          'BTC': 'bitcoin',
+          'ETH': 'ethereum',
+          'SOL': 'solana'
+        };
+        const coinId = coinMap[investCrypto] || 'bitcoin';
+        const response = await fetch(`https://api.coingecko.com/api/v3/simple/price?ids=${coinId}&vs_currencies=brl&include_24hr_change=true`);
         const data = await response.json();
-        const price = data.bitcoin.brl;
-        const change = data.bitcoin.brl_24h_change;
+        const price = data[coinId].brl;
+        const change = data[coinId].brl_24h_change;
         
-        setBtcPrice(price);
-        setBtcChange(change);
-        setBtcHistory(prev => {
+        setCryptoPrice(price);
+        setCryptoChange(change);
+        setCryptoHistory(prev => {
           const newHistory = [...prev, price].slice(-20);
           return newHistory;
         });
       } catch (error) {
-        console.error('Error fetching BTC price:', error);
+        console.error('Error fetching crypto price:', error);
       }
     };
 
     if (dashboardSection === 'casino' || dashboardSection === 'investments') {
-      fetchBtcPrice();
-      const interval = setInterval(fetchBtcPrice, 30000); // 30 seconds
+      fetchPrice();
+      const interval = setInterval(fetchPrice, 30000); // 30 seconds
       return () => clearInterval(interval);
     }
-  }, [dashboardSection, casinoSubTab]);
+  }, [dashboardSection, investCrypto]);
 
   // Auth Listener
   useEffect(() => {
@@ -632,6 +665,71 @@ export default function App() {
     }
   };
 
+  const handleNfcPayment = async () => {
+    if (!userData || !nfcAmount || !nfcRecipient) return;
+    const amount = parseFloat(nfcAmount);
+    
+    if (isNaN(amount) || amount <= 0) {
+      return showToast('Valor inválido', 'error');
+    }
+
+    if (amount > userData.saldo) {
+      setNfcStep('error');
+      return showToast('Saldo insuficiente', 'error');
+    }
+
+    setNfcStep('scanning');
+
+    // Simulate scanning delay
+    setTimeout(async () => {
+      try {
+        const q = query(collection(db, 'users'), where('pixKey', '==', nfcRecipient.toLowerCase().trim()));
+        let querySnapshot = await getDocs(q);
+
+        if (querySnapshot.empty) {
+          const qEmail = query(collection(db, 'users'), where('email', '==', nfcRecipient.toLowerCase().trim()));
+          querySnapshot = await getDocs(qEmail);
+        }
+
+        if (querySnapshot.empty) {
+          setNfcStep('error');
+          return showToast('Destinatário não encontrado', 'error');
+        }
+
+        const recipientData = querySnapshot.docs[0].data() as UserData;
+
+        await runTransaction(db, async (transaction) => {
+          const senderRef = doc(db, 'users', userData.uid);
+          const recipientRef = doc(db, 'users', recipientData.uid);
+          const transactionRef = doc(collection(db, 'transactions'));
+
+          const senderSnap = await transaction.get(senderRef);
+          const currentSaldo = senderSnap.data().saldo;
+          
+          transaction.update(senderRef, { saldo: currentSaldo - amount });
+          transaction.update(recipientRef, { saldo: recipientData.saldo + amount });
+          
+          transaction.set(transactionRef, {
+            senderUid: userData.uid,
+            senderName: userData.nome,
+            recipientUid: recipientData.uid,
+            recipientName: recipientData.nome,
+            amount: amount,
+            type: 'NFC_PAYMENT',
+            paymentSource: selectedNfcCard === 'balance' ? 'CONTA' : `CARTAO_VIRTUAL_${selectedNfcCard.slice(-4)}`,
+            timestamp: serverTimestamp()
+          });
+        });
+
+        setNfcStep('success');
+        showToast('Pagamento via Aproximação realizado!');
+      } catch (error: any) {
+        setNfcStep('error');
+        showToast(error.message, 'error');
+      }
+    }, 2500);
+  };
+
   const handleUpdatePixKey = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     if (!userData) return;
@@ -726,7 +824,7 @@ export default function App() {
 
   const handleBitcoinTrade = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!userData || !btcPrice) return;
+    if (!userData || !cryptoPrice) return;
 
     const amount = parseFloat(investAmount);
     if (isNaN(amount) || amount <= 0) {
@@ -743,61 +841,65 @@ export default function App() {
 
         const currentData = userDoc.data() as UserData;
         const currentBalance = currentData.saldo;
-        const currentBtcBalance = currentData.btcBalance || 0;
+        
+        const balanceField = investCrypto === 'BTC' ? 'btcBalance' : (investCrypto === 'ETH' ? 'ethBalance' : 'solBalance');
+        const currentCryptoBalance = (currentData as any)[balanceField] || 0;
 
         if (investAction === 'buy') {
           if (currentBalance < amount) throw new Error('Saldo insuficiente');
           
-          const btcToReceive = amount / btcPrice;
+          const coinToReceive = amount / cryptoPrice;
           transaction.update(userRef, {
             saldo: currentBalance - amount,
-            btcBalance: currentBtcBalance + btcToReceive
+            [balanceField]: currentCryptoBalance + coinToReceive
           });
 
           // Transaction log
           const transRef = doc(collection(db, 'transactions'));
           transaction.set(transRef, {
             from: userData.uid,
-            to: 'BITCOIN_EXCHANGE',
+            to: 'CRYPTO_EXCHANGE',
             senderUid: userData.uid,
             senderName: userData.nome,
-            recipientUid: 'BITCOIN_EXCHANGE',
-            recipientName: 'Mercado Bitcoin',
+            recipientUid: 'CRYPTO_EXCHANGE',
+            recipientName: `Mercado ${investCrypto}`,
             tipo: 'INVESTMENT',
             amount: amount,
-            btcAmount: btcToReceive,
+            cryptoAmount: coinToReceive,
+            cryptoSymbol: investCrypto,
             action: 'BUY',
             timestamp: serverTimestamp()
           });
         } else {
           // Sell
-          const btcToSell = amount / btcPrice;
-          if (currentBtcBalance < btcToSell) throw new Error('BTC insuficiente');
+          const coinToSell = amount / cryptoPrice;
+          if (currentCryptoBalance < coinToSell) throw new Error(`${investCrypto} insuficiente`);
 
           transaction.update(userRef, {
             saldo: currentBalance + amount,
-            btcBalance: currentBtcBalance - btcToSell
+            [balanceField]: currentCryptoBalance - coinToSell
           });
 
           // Transaction log
           const transRef = doc(collection(db, 'transactions'));
           transaction.set(transRef, {
-            from: 'BITCOIN_EXCHANGE',
+            from: 'CRYPTO_EXCHANGE',
             to: userData.uid,
-            senderUid: 'BITCOIN_EXCHANGE',
-            senderName: 'Mercado Bitcoin',
+            senderUid: 'CRYPTO_EXCHANGE',
+            senderName: `Mercado ${investCrypto}`,
             recipientUid: userData.uid,
             recipientName: userData.nome,
             tipo: 'INVESTMENT',
             amount: amount,
-            btcAmount: btcToSell,
+            cryptoAmount: coinToSell,
+            cryptoSymbol: investCrypto,
             action: 'SELL',
             timestamp: serverTimestamp()
           });
         }
       });
 
-      showToast(`${investAction === 'buy' ? 'Compra' : 'Venda'} realizada com sucesso!`);
+      showToast(`${investAction === 'buy' ? 'Compra' : 'Venda'} de ${investCrypto} realizada com sucesso!`);
       setInvestAmount('');
     } catch (error: any) {
       showToast(error.message || 'Erro na operação', 'error');
@@ -901,32 +1003,208 @@ export default function App() {
     }, 2000);
   };
 
-  const getPixPayload = (key: string, name: string, amount?: number) => {
-    const cleanName = name.normalize("NFD").replace(/[\u0300-\u036f]/g, "").slice(0, 25);
-    const accountInfo = `0014br.gov.bcb.pix01${key.length.toString().padStart(2, '0')}${key}`;
-    const payload = [
-      '000201',
-      `26${accountInfo.length.toString().padStart(2, '0')}${accountInfo}`,
-      '52040000',
-      '5303986',
-      amount ? `54${amount.toFixed(2).length.toString().padStart(2, '0')}${amount.toFixed(2)}` : '',
-      '5802BR',
-      `59${cleanName.length.toString().padStart(2, '0')}${cleanName.toUpperCase()}`,
-      '6008BRASILIA',
-      '62070503***',
-    ].join('');
+  const startCrashGame = async () => {
+    if (!userData || crashStatus === 'running') return;
+    const amount = parseFloat(crashBet);
 
-    const crcPart = payload + '6304';
-    let crc = 0xFFFF;
-    for (let i = 0; i < crcPart.length; i++) {
-      crc ^= crcPart.charCodeAt(i) << 8;
-      for (let j = 0; j < 8; j++) {
-        if (crc & 0x8000) crc = (crc << 1) ^ 0x1021;
-        else crc <<= 1;
-      }
+    if (isNaN(amount) || amount <= 0) {
+      showToast('Digite um valor de aposta', 'error');
+      return;
     }
-    const crcHex = (crc & 0xFFFF).toString(16).toUpperCase().padStart(4, '0');
-    return crcPart + crcHex;
+
+    if (userData.saldo < amount) {
+      showToast('Saldo insuficiente', 'error');
+      return;
+    }
+
+    try {
+      await updateDoc(doc(db, 'users', userData.uid), {
+        saldo: userData.saldo - amount
+      });
+
+      setCrashMultiplier(1.0);
+      setCrashStatus('running');
+      setHasCashedOut(false);
+      
+      // Increased house edge: crash point logic
+      // Math.random() < 0.1 means 10% chance to crash at 1.0x (instant rip)
+      const instantRip = Math.random() < 0.12; 
+      const crashPoint = instantRip ? 1.0 : (Math.random() * 5 + 1.1); // Lower average crash point
+      
+      let currentMulti = 1.0;
+      const interval = setInterval(() => {
+        // Multiplier curves up
+        currentMulti += 0.01 * (currentMulti * 0.4); 
+        setCrashMultiplier(currentMulti);
+
+        if (currentMulti >= crashPoint) {
+          clearInterval(interval);
+          setCrashStatus('crashed');
+          showToast('QUEBROU! Fim da decolagem.', 'error');
+        }
+      }, 100);
+
+      (window as any).crashInterval = interval;
+    } catch (error) {
+      showToast('Erro ao iniciar jogo', 'error');
+    }
+  };
+
+  const handleRouletteSpin = async () => {
+    if (!userData || isRouletteSpinning) return;
+    const amount = parseFloat(rouletteBetAmount);
+
+    if (isNaN(amount) || amount <= 0) {
+      showToast('Digite um valor de aposta', 'error');
+      return;
+    }
+
+    if (userData.saldo < amount) {
+      showToast('Saldo insuficiente', 'error');
+      return;
+    }
+
+    setIsRouletteSpinning(true);
+    setRouletteResult(null);
+
+    setTimeout(async () => {
+      const result = Math.floor(Math.random() * 37); // 0-36
+      setRouletteResult(result);
+      setRouletteHistory(prev => [result, ...prev].slice(0, 10));
+
+      const redNumbers = [1,3,5,7,9,12,14,16,18,19,21,23,25,27,30,32,34,36];
+      const blackNumbers = [2,4,6,8,10,11,13,15,17,20,22,24,26,28,29,31,33,35];
+      const resultColor = result === 0 ? 'green' : (redNumbers.includes(result) ? 'red' : 'black');
+
+      let isWin = false;
+      let multi = 0;
+
+      if (typeof rouletteSelection === 'string') {
+        if (rouletteSelection === resultColor) {
+          isWin = true;
+          multi = resultColor === 'green' ? 35 : 2;
+        }
+      } else {
+        if (rouletteSelection === result) {
+          isWin = true;
+          multi = 35;
+        }
+      }
+
+      try {
+        await updateDoc(doc(db, 'users', userData.uid), {
+          saldo: userData.saldo - amount + (isWin ? amount * multi : 0)
+        });
+
+        if (isWin) {
+          showToast(`VITÓRIA! +R$ ${(amount * multi).toFixed(2)}`, 'success');
+        }
+      } catch (err) {
+        showToast('Erro ao processar', 'error');
+      } finally {
+        setIsRouletteSpinning(false);
+      }
+    }, 3000);
+  };
+
+  const cashOutCrash = async () => {
+    if (!userData || crashStatus !== 'running' || hasCashedOut) return;
+    
+    setHasCashedOut(true);
+    setCrashStatus('cashed');
+    clearInterval((window as any).crashInterval);
+
+    const amount = parseFloat(crashBet);
+    const winAmount = amount * crashMultiplier;
+
+    try {
+      await updateDoc(doc(db, 'users', userData.uid), {
+        saldo: userData.saldo + winAmount
+      });
+      showToast(`LUCRO! R$ ${winAmount.toFixed(2)}`, 'success');
+    } catch (error) {
+      showToast('Erro ao processar resgate', 'error');
+    }
+  };
+
+  const handleDoubleSpin = async () => {
+    if (!userData || isDoubleSpinning) return;
+    const amount = parseFloat(doubleBetAmount);
+
+    if (isNaN(amount) || amount <= 0) {
+      showToast('Digite um valor de aposta', 'error');
+      return;
+    }
+
+    if (userData.saldo < amount) {
+      showToast('Saldo insuficiente', 'error');
+      return;
+    }
+
+    setIsDoubleSpinning(true);
+    setDoubleResult(null);
+
+    setTimeout(async () => {
+      const colors = ['orange', 'black', 'orange', 'black', 'orange', 'black', 'gold']; 
+      const result = colors[Math.floor(Math.random() * colors.length)];
+      setDoubleResult(result);
+      setDoubleHistory(prev => [result, ...prev].slice(0, 10));
+
+      const isWin = result === doubleColor;
+      let multi = 0;
+      if (isWin) {
+        multi = result === 'gold' ? 14 : 2;
+      }
+
+      try {
+        await updateDoc(doc(db, 'users', userData.uid), {
+          saldo: userData.saldo - amount + (amount * multi)
+        });
+
+        if (isWin) {
+          showToast(`VITÓRIA! +R$ ${(amount * multi).toFixed(2)}`, 'success');
+        }
+      } catch (err) {
+        showToast('Erro ao processar', 'error');
+      } finally {
+        setIsDoubleSpinning(false);
+      }
+    }, 2000);
+  };
+
+  const getPixPayload = (key: string = '', name: string = '', amount?: number) => {
+    try {
+      const safeName = (name || 'BANCO SIMULADO').normalize("NFD").replace(/[\u0300-\u036f]/g, "").slice(0, 25);
+      const safeKey = (key || '00000000000').toLowerCase().trim();
+      
+      const accountInfo = `0014br.gov.bcb.pix01${safeKey.length.toString().padStart(2, '0')}${safeKey}`;
+      const payload = [
+        '000201',
+        `26${accountInfo.length.toString().padStart(2, '0')}${accountInfo}`,
+        '52040000',
+        '5303986',
+        amount && amount > 0 ? `54${amount.toFixed(2).length.toString().padStart(2, '0')}${amount.toFixed(2)}` : '',
+        '5802BR',
+        `59${safeName.length.toString().padStart(2, '0')}${safeName.toUpperCase()}`,
+        '6008BRASILIA',
+        '62070503***',
+      ].join('');
+
+      const crcPart = payload + '6304';
+      let crc = 0xFFFF;
+      for (let i = 0; i < crcPart.length; i++) {
+        crc ^= crcPart.charCodeAt(i) << 8;
+        for (let j = 0; j < 8; j++) {
+          if (crc & 0x8000) crc = (crc << 1) ^ 0x1021;
+          else crc <<= 1;
+        }
+      }
+      const crcHex = (crc & 0xFFFF).toString(16).toUpperCase().padStart(4, '0');
+      return crcPart + crcHex;
+    } catch (e) {
+      console.error('Error generating PIX payload:', e);
+      return 'ERRO-PIX-GEN';
+    }
   };
 
   if (loading) {
@@ -1225,13 +1503,24 @@ export default function App() {
                               placeholder="0,00"
                             />
                           </div>
-                          <div className="md:col-span-2">
+                          <div className="md:col-span-2 flex gap-2">
                             <button 
                               type="submit"
-                              className="w-full bg-white text-[#764ba2] font-bold py-4 rounded-xl shadow-xl transition-all transform active:scale-95 flex items-center justify-center gap-2 hover:bg-white/90"
+                              className="flex-1 bg-white text-[#764ba2] font-bold py-4 rounded-xl shadow-xl transition-all transform active:scale-95 flex items-center justify-center gap-2 hover:bg-white/90"
                             >
                               <ArrowRightLeft size={20} />
                               Confirmar Transferência
+                            </button>
+                            <button 
+                              type="button"
+                              onClick={() => {
+                                setNfcStep('start');
+                                setIsNfcModalOpen(true);
+                              }}
+                              className="px-6 bg-white/20 text-white font-bold py-4 rounded-xl shadow-xl transition-all transform active:scale-95 flex items-center justify-center gap-2 hover:bg-white/30 border border-white/20"
+                              title="Pagar por Aproximação"
+                            >
+                              <Zap size={20} />
                             </button>
                           </div>
                         </form>
@@ -1397,6 +1686,19 @@ export default function App() {
                                     </div>
                                   </div>
                                   <div className="flex flex-col items-end gap-2">
+                                    {card.status === 'active' && (
+                                      <button 
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          setSelectedNfcCard(card.id);
+                                          setNfcStep('start');
+                                          setIsNfcModalOpen(true);
+                                        }}
+                                        className="bg-white/10 hover:bg-white text-[#764ba2] hover:text-black p-1.5 rounded-lg transition-all shadow-lg active:scale-95 flex items-center gap-1.5 text-[8px] font-black uppercase"
+                                      >
+                                        <Zap size={12} /> NFC
+                                      </button>
+                                    )}
                                     <button 
                                       onClick={() => toggleCardStatus(card.id, card.status)}
                                       className={`text-[10px] px-3 py-1 rounded-full font-bold uppercase tracking-wider border transition-all ${card.status === 'active' ? 'bg-green-500/20 border-green-500/40 text-green-300 hover:bg-red-500/20 hover:border-red-500/40 hover:text-red-300' : 'bg-red-500/20 border-red-500/40 text-red-300 hover:bg-green-500/20 hover:border-green-500/40 hover:text-green-300'}`}
@@ -1449,18 +1751,36 @@ export default function App() {
                       exit={{ opacity: 0, y: -20 }}
                       className="space-y-6"
                     >
-                      <div className="flex bg-black/60 p-2 rounded-2xl border border-white/10 gap-2 mb-8">
+                      <div className="flex bg-black/60 p-2 rounded-2xl border border-white/10 gap-2 mb-8 overflow-x-auto no-scrollbar">
                         <button 
                           onClick={() => setCasinoSubTab('lion')}
-                          className={`flex-1 py-3 rounded-xl font-black text-xs uppercase tracking-[0.2em] transition-all flex items-center justify-center gap-2 ${casinoSubTab === 'lion' ? 'bg-orange-600 text-white shadow-lg' : 'text-white/40 hover:bg-white/5'}`}
+                          className={`flex-1 min-w-[100px] py-3 rounded-xl font-black text-xs uppercase tracking-[0.2em] transition-all flex items-center justify-center gap-2 ${casinoSubTab === 'lion' ? 'bg-orange-600 text-white shadow-lg' : 'text-white/40 hover:bg-white/5'}`}
                         >
-                          <Zap size={14} /> Lion Luck
+                          <Zap size={14} /> Slots
+                        </button>
+                        <button 
+                          onClick={() => setCasinoSubTab('crash')}
+                          className={`flex-1 min-w-[100px] py-3 rounded-xl font-black text-xs uppercase tracking-[0.2em] transition-all flex items-center justify-center gap-2 ${casinoSubTab === 'crash' ? 'bg-orange-600 text-white shadow-lg' : 'text-white/40 hover:bg-white/5'}`}
+                        >
+                          <TrendingUp size={14} /> Crash
+                        </button>
+                        <button 
+                          onClick={() => setCasinoSubTab('double')}
+                          className={`flex-1 min-w-[100px] py-3 rounded-xl font-black text-xs uppercase tracking-[0.2em] transition-all flex items-center justify-center gap-2 ${casinoSubTab === 'double' ? 'bg-orange-600 text-white shadow-lg' : 'text-white/40 hover:bg-white/5'}`}
+                        >
+                          <Trophy size={14} /> Double
+                        </button>
+                        <button 
+                          onClick={() => setCasinoSubTab('roulette')}
+                          className={`flex-1 min-w-[100px] py-3 rounded-xl font-black text-xs uppercase tracking-[0.2em] transition-all flex items-center justify-center gap-2 ${casinoSubTab === 'roulette' ? 'bg-orange-600 text-white shadow-lg' : 'text-white/40 hover:bg-white/5'}`}
+                        >
+                          <CircleDot size={14} /> Roulette
                         </button>
                         <button 
                           onClick={() => setCasinoSubTab('bitcoin')}
-                          className={`flex-1 py-3 rounded-xl font-black text-xs uppercase tracking-[0.2em] transition-all flex items-center justify-center gap-2 ${casinoSubTab === 'bitcoin' ? 'bg-orange-600 text-white shadow-lg' : 'text-white/40 hover:bg-white/5'}`}
+                          className={`flex-1 min-w-[100px] py-3 rounded-xl font-black text-xs uppercase tracking-[0.2em] transition-all flex items-center justify-center gap-2 ${casinoSubTab === 'bitcoin' ? 'bg-orange-600 text-white shadow-lg' : 'text-white/40 hover:bg-white/5'}`}
                         >
-                          <Bitcoin size={14} /> Bitcoin
+                          <Bitcoin size={14} /> Crypto
                         </button>
                       </div>
 
@@ -1469,13 +1789,33 @@ export default function App() {
                            <div className="absolute top-0 right-0 w-96 h-96 bg-orange-500/5 rounded-full blur-[100px] pointer-events-none"></div>
                            
                            <div className="relative z-10">
+                            <div className="flex bg-black/40 p-1 rounded-xl mb-8 w-fit gap-1">
+                              {['BTC', 'ETH', 'SOL'].map((token) => (
+                                <button 
+                                  key={token}
+                                  onClick={() => setInvestCrypto(token as any)}
+                                  className={`px-4 py-2 rounded-lg text-[10px] font-black tracking-widest uppercase transition-all ${investCrypto === token ? 'bg-orange-500 text-black' : 'text-white/40 hover:bg-white/5'}`}
+                                >
+                                  {token}
+                                </button>
+                              ))}
+                            </div>
+
                             <div className="flex flex-col md:flex-row md:items-center justify-between gap-8 mb-12">
                               <div className="flex items-center gap-5">
                                 <div className="w-20 h-20 bg-orange-500/10 border border-orange-500/50 flex items-center justify-center rounded-[24px] shadow-[0_0_30px_rgba(249,115,22,0.2)] transform -rotate-3">
-                                  <Bitcoin size={40} className="text-orange-500" />
+                                  {investCrypto === 'BTC' ? <Bitcoin size={40} className="text-orange-500" /> : investCrypto === 'ETH' ? (
+                                    <svg viewBox="0 0 24 24" className="w-10 h-10 text-orange-500 fill-current">
+                                      <path d="M12 2L4.5 14.5 12 19l7.5-4.5L12 2zM12 21l7.5-4.5L12 13 4.5 16.5 12 21z" />
+                                    </svg>
+                                  ) : (
+                                    <svg viewBox="0 0 24 24" className="w-10 h-10 text-orange-500 fill-current">
+                                      <path d="M4.5 4.5h15L15 9H0L4.5 4.5zm0 15h15l-4.5-4.5H0l4.5 4.5zm15-7.5H4.5L9 7.5h15l-4.5 4.5z" />
+                                    </svg>
+                                  )}
                                 </div>
                                 <div>
-                                  <h3 className="text-3xl font-black text-white italic uppercase tracking-tighter">Market Bitcoin</h3>
+                                  <h3 className="text-3xl font-black text-white italic uppercase tracking-tighter">Market {investCrypto}</h3>
                                   <div className="flex items-center gap-2">
                                     <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse shadow-[0_0_8px_rgba(34,197,94,1)]"></div>
                                     <p className="text-orange-500/60 text-[10px] font-black tracking-widest uppercase">Operação Direta</p>
@@ -1487,32 +1827,32 @@ export default function App() {
                                 <p className="text-[10px] font-black text-white/40 uppercase tracking-[0.3em] mb-2">Preço de Mercado</p>
                                 <div className="flex items-center justify-end gap-4">
                                   <h4 className="text-5xl font-black text-white tracking-tighter tabular-nums">
-                                    {btcPrice ? `R$ ${btcPrice.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}` : 'CARREGANDO...'}
+                                    {cryptoPrice ? `R$ ${cryptoPrice.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}` : 'CARREGANDO...'}
                                   </h4>
-                                  {btcChange !== null && (
-                                    <div className={`px-3 py-1.5 rounded-lg text-xs font-black flex items-center gap-1.5 ${btcChange >= 0 ? 'bg-green-500/10 text-green-400 border border-green-500/20' : 'bg-red-500/10 text-red-500 border border-red-500/20'}`}>
-                                      {btcChange >= 0 ? <ArrowUpRight size={14} /> : <ArrowDownRight size={14} />}
-                                      {Math.abs(btcChange).toFixed(2)}%
+                                  {cryptoChange !== null && (
+                                    <div className={`px-3 py-1.5 rounded-lg text-xs font-black flex items-center gap-1.5 ${cryptoChange >= 0 ? 'bg-green-500/10 text-green-400 border border-green-500/20' : 'bg-red-500/10 text-red-500 border border-red-500/20'}`}>
+                                      {cryptoChange >= 0 ? <ArrowUpRight size={14} /> : <ArrowDownRight size={14} />}
+                                      {Math.abs(cryptoChange).toFixed(2)}%
                                     </div>
                                   )}
                                 </div>
                               </div>
                             </div>
 
-                            <div className="bg-black/40 h-48 rounded-3xl mb-12 border border-white/5 relative flex items-end p-4 overflow-hidden">
+                            <div className="bg-black/40 h-48 rounded-3xl mb-12 border border-white/5 relative flex items-end p-4 overflow-hidden shadow-inner">
                               <svg className="w-full h-full opacity-60" viewBox="0 0 100 100" preserveAspectRatio="none">
                                 <path 
-                                  d={`M 0 100 ${btcHistory.map((p, i) => `L ${(i / (btcHistory.length - 1)) * 100} ${100 - ((p - Math.min(...btcHistory)) / (Math.max(...btcHistory) - Math.min(...btcHistory) || 1)) * 80}`).join(' ')} L 100 100 Z`}
-                                  fill="url(#gradient-btc)"
+                                  d={`M 0 100 ${cryptoHistory.map((p, i) => `L ${(i / (cryptoHistory.length - 1)) * 100} ${100 - ((p - Math.min(...cryptoHistory)) / (Math.max(...cryptoHistory) - Math.min(...cryptoHistory) || 1)) * 80}`).join(' ')} L 100 100 Z`}
+                                  fill="url(#gradient-crypto)"
                                 />
                                 <path 
-                                  d={`M 0 ${100 - ((btcHistory[0] - Math.min(...btcHistory)) / (Math.max(...btcHistory) - Math.min(...btcHistory) || 1)) * 80} ${btcHistory.map((p, i) => `L ${(i / (btcHistory.length - 1)) * 100} ${100 - ((p - Math.min(...btcHistory)) / (Math.max(...btcHistory) - Math.min(...btcHistory) || 1)) * 80}`).join(' ')}`}
+                                  d={`M 0 ${100 - ((cryptoHistory[0] - Math.min(...cryptoHistory)) / (Math.max(...cryptoHistory) - Math.min(...cryptoHistory) || 1)) * 80} ${cryptoHistory.map((p, i) => `L ${(i / (cryptoHistory.length - 1)) * 100} ${100 - ((p - Math.min(...cryptoHistory)) / (Math.max(...cryptoHistory) - Math.min(...cryptoHistory) || 1)) * 80}`).join(' ')}`}
                                   fill="none"
                                   stroke="#f39c12"
                                   strokeWidth="2"
                                 />
                                 <defs>
-                                  <linearGradient id="gradient-btc" x1="0" y1="0" x2="0" y2="1">
+                                  <linearGradient id="gradient-crypto" x1="0" y1="0" x2="0" y2="1">
                                     <stop offset="0%" stopColor="#f39c12" stopOpacity="0.4" />
                                     <stop offset="100%" stopColor="#f39c12" stopOpacity="0" />
                                   </linearGradient>
@@ -1522,33 +1862,275 @@ export default function App() {
 
                             <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
                                 <div className="space-y-6">
-                                  <div className="bg-white/5 p-6 rounded-2xl border border-white/10">
-                                    <p className="text-[10px] font-black uppercase tracking-widest text-white/40 mb-3">Sua Carteira Bitcoin</p>
-                                    <div className="flex items-center justify-between">
-                                      <div className="flex items-center gap-3">
-                                        <div className="w-10 h-10 bg-orange-500/20 text-orange-500 rounded-xl flex items-center justify-center">
-                                          <Bitcoin size={20} />
-                                        </div>
-                                        <div>
-                                          <p className="text-xl font-black text-white">{(userData?.btcBalance || 0).toFixed(8)} BTC</p>
-                                          <p className="text-[10px] text-white/40 font-bold">~ R$ {((userData?.btcBalance || 0) * (btcPrice || 0)).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</p>
-                                        </div>
+                                  <div className="bg-white/5 p-8 rounded-3xl border border-white/10">
+                                    <p className="text-[10px] font-black uppercase tracking-[0.3em] text-white/40 mb-4">Sua Carteira</p>
+                                    <div className="flex items-center gap-4">
+                                      <div className="w-14 h-14 bg-orange-500/10 text-orange-500 rounded-2xl flex items-center justify-center border border-orange-500/20">
+                                        <Bitcoin size={28} />
+                                      </div>
+                                      <div>
+                                        <p className="text-3xl font-black text-white">
+                                          {investCrypto === 'BTC' ? (userData?.btcBalance || 0).toFixed(8) : investCrypto === 'ETH' ? (userData?.ethBalance || 0).toFixed(6) : (userData?.solBalance || 0).toFixed(4)} {investCrypto}
+                                        </p>
+                                        <p className="text-xs text-white/40 font-bold uppercase tracking-widest mt-1">
+                                          ~ R$ {((investCrypto === 'BTC' ? (userData?.btcBalance || 0) : investCrypto === 'ETH' ? (userData?.ethBalance || 0) : (userData?.solBalance || 0)) * (cryptoPrice || 0)).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                                        </p>
                                       </div>
                                     </div>
                                   </div>
-                                  <div className="flex gap-2">
-                                    <button onClick={() => setInvestAction('buy')} className={`flex-1 py-4 rounded-xl font-black text-sm uppercase tracking-widest transition-all ${investAction === 'buy' ? 'bg-orange-500 text-black' : 'bg-white/5 text-white'}`}>Comprar</button>
-                                    <button onClick={() => setInvestAction('sell')} className={`flex-1 py-4 rounded-xl font-black text-sm uppercase tracking-widest transition-all ${investAction === 'sell' ? 'bg-red-600 text-white' : 'bg-white/5 text-white'}`}>Vender</button>
+                                  <div className="flex gap-4">
+                                    <button onClick={() => setInvestAction('buy')} className={`flex-1 py-5 rounded-[24px] font-black text-sm uppercase tracking-widest transition-all ${investAction === 'buy' ? 'bg-orange-500 text-black shadow-[0_10px_30px_rgba(249,115,22,0.3)]' : 'bg-white/5 text-white border border-white/10 hover:bg-white/10'}`}>Comprar</button>
+                                    <button onClick={() => setInvestAction('sell')} className={`flex-1 py-5 rounded-[24px] font-black text-sm uppercase tracking-widest transition-all ${investAction === 'sell' ? 'bg-red-600 text-white shadow-[0_10px_30px_rgba(220,38,38,0.3)]' : 'bg-white/5 text-white border border-white/10 hover:bg-white/10'}`}>Vender</button>
                                   </div>
                                 </div>
-                                <form onSubmit={handleBitcoinTrade} className="bg-white/5 p-8 rounded-3xl border border-white/10 space-y-6">
-                                  <input type="number" value={investAmount} onChange={(e) => setInvestAmount(e.target.value)} placeholder="Valor BRL" className="w-full bg-black/40 border-2 border-white/10 rounded-2xl py-4 px-6 text-xl font-black text-white outline-none focus:border-orange-500" />
-                                  <button type="submit" className={`w-full py-5 rounded-2xl font-black text-lg uppercase tracking-widest transition-all ${investAction === 'buy' ? 'bg-orange-500 text-black' : 'bg-red-600 text-white'}`}>
-                                    {isInvesting ? 'Processando...' : 'Confirmar'}
+                                <form onSubmit={handleBitcoinTrade} className="bg-white/5 p-10 rounded-[40px] border border-white/10 space-y-8">
+                                  <div className="space-y-4">
+                                    <label className="text-[10px] font-black text-white/40 uppercase tracking-[0.3em] block ml-2">Montante da Operação</label>
+                                    <div className="relative">
+                                      <input type="number" value={investAmount} onChange={(e) => setInvestAmount(e.target.value)} placeholder="0.00" className="w-full bg-black/60 border-2 border-white/10 rounded-[28px] py-6 px-8 text-3xl font-black text-white outline-none focus:border-orange-500 transition-all placeholder:text-white/5" />
+                                      <span className="absolute right-8 top-1/2 -translate-y-1/2 font-black text-orange-500/40 text-xl">BRL</span>
+                                    </div>
+                                  </div>
+                                  <button type="submit" className={`w-full py-6 rounded-[28px] font-black text-xl uppercase tracking-[0.2em] transition-all transform active:scale-95 shadow-2xl ${investAction === 'buy' ? 'bg-orange-500 text-black hover:bg-orange-400' : 'bg-red-600 text-white hover:bg-red-500'}`}>
+                                    {isInvesting ? 'PROCESSANDO...' : 'EXECUTAR ORDEM'}
                                   </button>
                                 </form>
                             </div>
                            </div>
+                        </div>
+                      ) : casinoSubTab === 'roulette' ? (
+                        <div className="bg-[#0a0a0a]/80 backdrop-blur-3xl p-10 rounded-[40px] border border-white/5 shadow-2xl relative overflow-hidden">
+                          <div className="relative z-10">
+                            <div className="text-center mb-10">
+                              <h3 className="text-4xl font-black text-white italic uppercase tracking-tighter mb-4">LION <span className="text-orange-500">ROULETTE</span></h3>
+                              <div className="flex justify-center gap-2 overflow-x-auto no-scrollbar py-2">
+                                {rouletteHistory.map((res, i) => {
+                                  const redNumbers = [1,3,5,7,9,12,14,16,18,19,21,23,25,27,30,32,34,36];
+                                  const color = res === 0 ? 'bg-green-600' : (redNumbers.includes(res) ? 'bg-red-600' : 'bg-black');
+                                  return (
+                                    <div key={i} className={`w-10 h-10 rounded-xl flex items-center justify-center font-black text-white text-sm border border-white/10 ${color}`}>
+                                      {res}
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            </div>
+
+                            <div className="bg-black/60 p-8 rounded-[40px] border-4 border-white/5 mb-10 relative overflow-hidden flex flex-col items-center">
+                              <motion.div 
+                                animate={isRouletteSpinning ? { rotate: 360 * 5 } : { rotate: 0 }}
+                                transition={{ duration: 3, ease: "easeOut" }}
+                                className="w-48 h-48 rounded-full border-8 border-orange-600/20 relative flex items-center justify-center"
+                              >
+                                {rouletteResult !== null && (
+                                  <motion.div 
+                                    initial={{ scale: 0 }}
+                                    animate={{ scale: 1 }}
+                                    className={`w-24 h-24 rounded-full flex items-center justify-center text-4xl font-black text-white border-4 border-white/20 shadow-2xl
+                                      ${rouletteResult === 0 ? 'bg-green-600' : ([1,3,5,7,9,12,14,16,18,19,21,23,25,27,30,32,34,36].includes(rouletteResult) ? 'bg-red-600' : 'bg-black')}
+                                    `}
+                                  >
+                                    {rouletteResult}
+                                  </motion.div>
+                                )}
+                                {!isRouletteSpinning && rouletteResult === null && <CircleDot size={64} className="text-orange-500/20" />}
+                              </motion.div>
+                              <div className="absolute top-0 w-1 h-12 bg-white shadow-[0_0_15px_white] z-10"></div>
+                            </div>
+
+                            <div className="grid grid-cols-3 gap-3 mb-8">
+                                <button onClick={() => setRouletteSelection('red')} className={`py-6 rounded-2xl border-4 transition-all flex flex-col items-center gap-2 ${rouletteSelection === 'red' ? 'bg-red-600 border-white shadow-xl' : 'bg-red-600/40 border-white/10'}`}>
+                                  <span className="font-black text-white text-[10px] tracking-widest">RED</span>
+                                  <span className="font-bold text-white text-xs opacity-60">2x</span>
+                                </button>
+                                <button onClick={() => setRouletteSelection('green')} className={`py-6 rounded-2xl border-4 transition-all flex flex-col items-center gap-2 ${rouletteSelection === 'green' ? 'bg-green-600 border-white shadow-xl' : 'bg-green-600/40 border-white/10'}`}>
+                                  <span className="font-black text-white text-[10px] tracking-widest">ZERO</span>
+                                  <span className="font-bold text-white text-xs opacity-60">35x</span>
+                                </button>
+                                <button onClick={() => setRouletteSelection('black')} className={`py-6 rounded-2xl border-4 transition-all flex flex-col items-center gap-2 ${rouletteSelection === 'black' ? 'bg-black border-white shadow-xl' : 'bg-black/40 border-white/10'}`}>
+                                  <span className="font-black text-white text-[10px] tracking-widest">BLACK</span>
+                                  <span className="font-bold text-white text-xs opacity-60">2x</span>
+                                </button>
+                            </div>
+
+                            <div className="grid grid-cols-6 gap-2 mb-8 max-h-32 overflow-y-auto p-2 bg-black/40 rounded-2xl no-scrollbar">
+                                {[...Array(37)].map((_, i) => (
+                                  <button 
+                                    key={i} 
+                                    onClick={() => setRouletteSelection(i)}
+                                    className={`py-2 rounded-lg font-black text-xs transition-all border ${rouletteSelection === i ? 'bg-orange-500 text-black border-white' : 'bg-white/5 text-white/40 border-white/5'}`}
+                                  >
+                                    {i}
+                                  </button>
+                                ))}
+                            </div>
+
+                            <div className="bg-black/40 p-8 rounded-[32px] border border-white/5 space-y-6">
+                              <input 
+                                type="number" 
+                                value={rouletteBetAmount} 
+                                onChange={(e) => setRouletteBetAmount(e.target.value)}
+                                className="w-full bg-transparent text-center text-4xl font-black text-white outline-none" 
+                                placeholder="0.00" 
+                              />
+                              <button 
+                                onClick={handleRouletteSpin}
+                                disabled={isRouletteSpinning}
+                                className={`w-full py-6 rounded-[28px] font-black text-2xl uppercase italic tracking-tighter transition-all ${isRouletteSpinning ? 'bg-white/5 text-white/20' : 'bg-orange-600 text-white shadow-lg'}`}
+                              >
+                                {isRouletteSpinning ? 'GIRANDO...' : 'APOSTAR'}
+                              </button>
+                            </div>
+                          </div>
+                        </div>
+                      ) : casinoSubTab === 'crash' ? (
+                        <div className="bg-[#0a0a0a]/80 backdrop-blur-3xl p-10 rounded-[40px] border-4 border-orange-600/30 shadow-[0_0_100px_rgba(249,115,22,0.1)] relative overflow-hidden">
+                          <div className="absolute top-0 left-0 w-full h-full bg-[radial-gradient(circle_at_top_right,_rgba(249,115,22,0.05)_0%,_transparent_60%)]"></div>
+                          
+                          <div className="relative z-10 flex flex-col items-center">
+                            <div className="flex items-center gap-4 mb-12">
+                              <div className="w-16 h-16 bg-white/5 rounded-2xl flex items-center justify-center border border-white/10 shadow-xl">
+                                <TrendingUp size={32} className="text-orange-500" />
+                              </div>
+                              <div>
+                                <h3 className="text-4xl font-black text-white italic uppercase tracking-tighter">LION <span className="text-orange-500">CRASH</span></h3>
+                                <p className="text-white/30 text-[10px] font-black uppercase tracking-[0.3em]">Decolagem Alpha</p>
+                              </div>
+                            </div>
+
+                            <div className="w-full aspect-video bg-black/60 rounded-[48px] border-4 border-white/5 mb-12 flex flex-col items-center justify-center relative overflow-hidden shadow-2xl">
+                                <div className="absolute inset-0 opacity-20 pointer-events-none">
+                                  <div className="absolute bottom-0 left-0 w-full h-[1px] bg-white/20"></div>
+                                  <div className="absolute bottom-0 left-0 w-[1px] h-full bg-white/20"></div>
+                                  {[...Array(10)].map((_, i) => (
+                                    <div key={i} className="absolute bottom-0 w-full h-[1px] bg-white/5" style={{ bottom: `${i * 10}%` }}></div>
+                                  ))}
+                                </div>
+
+                                <motion.div 
+                                  animate={crashStatus === 'running' ? { scale: [1, 1.1, 1] } : {}}
+                                  transition={{ repeat: Infinity, duration: 1 }}
+                                  className={`text-8xl md:text-9xl font-black italic tracking-tighter tabular-nums ${crashStatus === 'crashed' ? 'text-red-600' : 'text-white'}`}
+                                >
+                                  {crashMultiplier.toFixed(2)}x
+                                </motion.div>
+                                
+                                {crashStatus === 'crashed' && (
+                                  <motion.div initial={{ opacity: 0, scale: 0.5 }} animate={{ opacity: 1, scale: 1 }} className="mt-4 px-6 py-2 bg-red-600 rounded-full text-white font-black uppercase text-xs tracking-widest">
+                                    CABOOM!
+                                  </motion.div>
+                                )}
+
+                                {crashStatus === 'running' && (
+                                  <div className="absolute bottom-8 right-12 flex items-center gap-3">
+                                    <div className="w-3 h-3 bg-green-500 rounded-full animate-ping"></div>
+                                    <span className="text-[10px] font-black text-white/40 uppercase tracking-[0.2em]">SISTEMA ATIVO</span>
+                                  </div>
+                                )}
+                            </div>
+
+                            <div className="w-full max-w-sm space-y-6">
+                              <div className="bg-black/40 p-8 rounded-[32px] border border-white/5 space-y-6">
+                                <div>
+                                  <label className="text-[10px] font-black text-white/40 uppercase tracking-[0.3em] block text-center mb-4">Valor da Decolagem</label>
+                                  <div className="relative">
+                                    <input 
+                                      type="number" 
+                                      value={crashBet} 
+                                      onChange={(e) => setCrashBet(e.target.value)}
+                                      disabled={crashStatus === 'running'}
+                                      className="w-full bg-transparent text-center text-4xl font-black text-white outline-none placeholder:text-white/5" 
+                                      placeholder="0.00"
+                                    />
+                                    <div className="absolute right-0 top-1/2 -translate-y-1/2 flex flex-col gap-1">
+                                      <button onClick={() => setCrashBet(prev => (parseFloat(prev || '0') + 10).toString())} className="text-orange-500 hover:text-white transition-colors" disabled={crashStatus === 'running'}><ArrowUpRight size={16}/></button>
+                                      <button onClick={() => setCrashBet(prev => (Math.max(0, parseFloat(prev || '0') - 10)).toString())} className="text-orange-500 hover:text-white transition-colors" disabled={crashStatus === 'running'}><ArrowDownRight size={16}/></button>
+                                    </div>
+                                  </div>
+                                </div>
+                              </div>
+
+                              {crashStatus === 'running' && !hasCashedOut ? (
+                                <button 
+                                  onClick={cashOutCrash}
+                                  className="w-full py-8 bg-green-600 text-white rounded-[32px] font-black text-2xl uppercase italic tracking-tighter shadow-[0_20px_50px_rgba(22,163,74,0.3)] hover:scale-105 active:scale-95 transition-all"
+                                >
+                                  RESGATAR R$ {(parseFloat(crashBet || '0') * crashMultiplier).toFixed(2)}
+                                </button>
+                              ) : (
+                                <button 
+                                  onClick={startCrashGame}
+                                  disabled={crashStatus === 'running'}
+                                  className={`w-full py-8 rounded-[32px] font-black text-2xl uppercase italic tracking-tighter shadow-2xl transition-all active:scale-95 ${crashStatus === 'running' ? 'bg-white/5 text-white/20' : 'bg-orange-600 text-white hover:shadow-orange-600/40'}`}
+                                >
+                                  {crashStatus === 'running' ? 'AGUARDE...' : 'DECOLAR'}
+                                </button>
+                              )}
+                              
+                              <p className="text-[10px] text-center text-white/20 font-bold uppercase tracking-widest">Saldo: R$ {userData?.saldo.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</p>
+                            </div>
+                          </div>
+                        </div>
+                      ) : casinoSubTab === 'double' ? (
+                        <div className="bg-[#0a0a0a]/80 backdrop-blur-3xl p-10 rounded-[40px] border border-white/5 shadow-2xl relative overflow-hidden">
+                          <div className="relative z-10">
+                            <div className="text-center mb-12">
+                              <h3 className="text-4xl font-black text-white italic uppercase tracking-tighter mb-2">LION <span className="text-orange-500">DOUBLE</span></h3>
+                              <div className="flex justify-center gap-2">
+                                {doubleHistory.map((res, i) => (
+                                  <div key={i} className={`w-8 h-8 rounded-lg border border-white/10 ${res === 'orange' ? 'bg-orange-600' : res === 'black' ? 'bg-black' : 'bg-yellow-500 animate-pulse'}`}></div>
+                                ))}
+                              </div>
+                            </div>
+
+                            <div className="bg-black/60 p-10 rounded-[48px] border-4 border-white/5 mb-12 relative overflow-hidden">
+                              <div className="flex gap-4 justify-center items-center py-10">
+                                {['black', 'orange', 'gold', 'orange', 'black'].map((c, i) => (
+                                  <motion.div 
+                                    key={i}
+                                    animate={isDoubleSpinning ? { x: [0, -1000, 0] } : {}}
+                                    transition={{ duration: 2, ease: "easeOut" }}
+                                    className={`w-24 h-24 md:w-32 md:h-32 rounded-[24px] shadow-2xl flex items-center justify-center border-4 border-white/10 ${c === 'orange' ? 'bg-orange-600' : c === 'black' ? 'bg-black' : 'bg-yellow-500'}`}
+                                  >
+                                    {c === 'gold' && <Trophy size={40} className="text-black" />}
+                                  </motion.div>
+                                ))}
+                              </div>
+                              <div className="absolute top-0 left-1/2 -translate-x-1/2 w-1 h-full bg-orange-500 shadow-[0_0_20px_white] z-20"></div>
+                            </div>
+
+                            <div className="grid grid-cols-3 gap-4 mb-10">
+                              <button onClick={() => setDoubleColor('black')} className={`p-6 rounded-3xl border-4 transition-all flex flex-col items-center gap-3 ${doubleColor === 'black' ? 'bg-black border-white shadow-2xl' : 'bg-black/40 border-white/10'}`}>
+                                <div className="w-10 h-10 bg-black border border-white/20 rounded-full"></div>
+                                <span className="font-black text-white italic text-xs">2.00x</span>
+                              </button>
+                              <button onClick={() => setDoubleColor('orange')} className={`p-6 rounded-3xl border-4 transition-all flex flex-col items-center gap-3 ${doubleColor === 'orange' ? 'bg-orange-600 border-white shadow-2xl' : 'bg-orange-600/40 border-white/10'}`}>
+                                <div className="w-10 h-10 bg-orange-600 border border-white/20 rounded-full"></div>
+                                <span className="font-black text-white italic text-xs">2.00x</span>
+                              </button>
+                              <button onClick={() => setDoubleColor('gold')} className={`p-6 rounded-3xl border-4 transition-all flex flex-col items-center gap-3 ${doubleColor === 'gold' ? 'bg-yellow-500 border-white shadow-2xl' : 'bg-yellow-500/40 border-white/10'}`}>
+                                <div className="w-10 h-10 bg-yellow-500 border border-white/20 rounded-full animate-pulse"></div>
+                                <span className="font-black text-black italic text-xs font-black">14.00x</span>
+                              </button>
+                            </div>
+
+                            <div className="bg-black/40 p-8 rounded-[32px] border border-white/5 space-y-6">
+                              <input 
+                                type="number" 
+                                value={doubleBetAmount} 
+                                onChange={(e) => setDoubleBetAmount(e.target.value)}
+                                className="w-full bg-transparent text-center text-4xl font-black text-white outline-none" 
+                                placeholder="0.00" 
+                              />
+                              <button 
+                                onClick={handleDoubleSpin}
+                                disabled={isDoubleSpinning}
+                                className={`w-full py-6 rounded-[28px] font-black text-2xl uppercase italic tracking-tighter transition-all ${isDoubleSpinning ? 'bg-white/5 text-white/20' : 'bg-orange-600 text-white shadow-lg'}`}
+                              >
+                                {isDoubleSpinning ? 'SORTEANDO...' : 'APOSTAR'}
+                              </button>
+                            </div>
+                          </div>
                         </div>
                       ) : (
                         /* LION LUCK UI */
@@ -1887,6 +2469,7 @@ export default function App() {
         <AnimatePresence>
           {isQrModalOpen && userData && (
             <motion.div 
+              key="pix-qr-modal"
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
@@ -1926,12 +2509,20 @@ export default function App() {
                   </div>
                 </div>
 
-                <div className="bg-white p-6 rounded-3xl flex items-center justify-center mb-8 shadow-[0_0_40px_rgba(255,255,255,0.1)]">
-                  <QRCodeSVG 
-                    value={getPixPayload(userData.pixKey, userData.nome, qrAmount ? parseFloat(qrAmount) : undefined)} 
-                    size={200}
-                    level="H"
-                  />
+                <div className="bg-white p-6 rounded-3xl flex items-center justify-center mb-8 shadow-[0_0_40px_rgba(255,255,255,0.1)] relative min-h-[200px]">
+                  {userData.pixKey && userData.nome ? (
+                    <QRCodeSVG 
+                      value={getPixPayload(userData.pixKey, userData.nome, qrAmount ? parseFloat(qrAmount) : undefined)} 
+                      size={200}
+                      level="H"
+                      includeMargin={true}
+                    />
+                  ) : (
+                    <div className="text-[#1a1a2e] text-center p-4">
+                      <p className="font-bold text-sm">Chave PIX não encontrada</p>
+                      <p className="text-[10px] opacity-60">Complete seu perfil para receber PIX</p>
+                    </div>
+                  )}
                 </div>
 
                 <div className="space-y-4">
@@ -1948,6 +2539,126 @@ export default function App() {
                   </button>
                   <p className="text-[10px] text-center text-white/20 uppercase tracking-[0.2em] font-bold">Chave: {userData.pixKey}</p>
                 </div>
+              </motion.div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+        
+        {/* NFC Simulation Modal */}
+        <AnimatePresence>
+          {isNfcModalOpen && userData && (
+            <motion.div 
+              key="nfc-payment-modal"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="fixed inset-0 z-[110] flex items-center justify-center p-4 bg-black/90 backdrop-blur-md"
+            >
+              <motion.div 
+                initial={{ scale: 0.9, y: 20 }}
+                animate={{ scale: 1, y: 0 }}
+                exit={{ scale: 0.9, y: 20 }}
+                className="bg-[#0f0f1a] w-full max-w-sm rounded-[40px] p-10 border border-white/10 shadow-[0_0_100px_rgba(255,255,255,0.05)] relative overflow-hidden"
+              >
+                <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-transparent via-white/20 to-transparent"></div>
+                
+                <button 
+                  onClick={() => setIsNfcModalOpen(false)}
+                  className="absolute top-8 right-8 text-white/40 hover:text-white transition-colors"
+                >
+                  <X size={24} />
+                </button>
+
+                <div className="text-center mb-10">
+                  <motion.div 
+                    animate={nfcStep === 'scanning' ? { scale: [1, 1.1, 1], opacity: [1, 0.5, 1] } : {}}
+                    transition={{ repeat: Infinity, duration: 1.5 }}
+                    className={`w-24 h-24 rounded-3xl flex items-center justify-center mx-auto mb-6 text-white shadow-2xl ${nfcStep === 'success' ? 'bg-green-500 shadow-green-500/20' : nfcStep === 'error' ? 'bg-red-500 shadow-red-500/20' : 'bg-white/10 border border-white/20'}`}
+                  >
+                    {nfcStep === 'success' ? <CheckCircle2 size={48} /> : nfcStep === 'error' ? <AlertCircle size={48} /> : <Zap size={48} />}
+                  </motion.div>
+                  <h3 className="text-3xl font-black text-white italic uppercase tracking-tighter">
+                    {nfcStep === 'start' ? 'Pagamento NFC' : nfcStep === 'scanning' ? 'Aproximando...' : nfcStep === 'success' ? 'Sucesso!' : 'Falha!'}
+                  </h3>
+                  <p className="text-sm text-white/40 mt-2">
+                    {nfcStep === 'start' ? 'Aproxime seu dispositivo da maquininha' : nfcStep === 'scanning' ? 'Mantenha o dispositivo próximo' : nfcStep === 'success' ? 'Transação confirmada' : 'Tente novamente'}
+                  </p>
+                </div>
+
+                {nfcStep === 'start' && (
+                  <div className="space-y-6">
+                    <div className="space-y-4">
+                      <div className="bg-white/5 p-6 rounded-3xl border border-white/10">
+                        <label className="block text-[10px] font-black tracking-[0.3em] uppercase text-white/40 mb-4 text-center">Valor do Pagamento</label>
+                        <input 
+                          type="number"
+                          value={nfcAmount}
+                          onChange={(e) => setNfcAmount(e.target.value)}
+                          placeholder="0,00"
+                          className="w-full bg-transparent text-center text-4xl font-black text-white focus:outline-none placeholder:opacity-20"
+                        />
+                      </div>
+                      <div className="bg-white/5 p-4 rounded-2xl border border-white/10">
+                        <label className="block text-[10px] font-black tracking-[0.3em] uppercase text-white/40 mb-2 text-center">Chave PIX Destino</label>
+                        <input 
+                          type="text"
+                          value={nfcRecipient}
+                          onChange={(e) => setNfcRecipient(e.target.value)}
+                          placeholder="Email ou Chave"
+                          className="w-full bg-transparent text-center text-sm font-bold text-white focus:outline-none placeholder:opacity-20 uppercase tracking-widest"
+                        />
+                      </div>
+                      
+                      <div className="bg-white/5 p-4 rounded-2xl border border-white/10">
+                        <label className="block text-[10px] font-black tracking-[0.3em] uppercase text-white/40 mb-3 text-center">Fonte de Pagamento</label>
+                        <select 
+                          value={selectedNfcCard}
+                          onChange={(e) => setSelectedNfcCard(e.target.value)}
+                          className="w-full bg-transparent text-center text-xs font-black text-white focus:outline-none uppercase tracking-widest cursor-pointer"
+                        >
+                          <option value="balance" className="bg-[#1a1a2e]">Saldo da Conta</option>
+                          {cards.filter(c => c.status === 'active').map(card => (
+                            <option key={card.id} value={card.id} className="bg-[#1a1a2e]">
+                              Cartão Virtual {card.cardNumber.slice(-4)}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    </div>
+                    
+                    <button 
+                      onClick={handleNfcPayment}
+                      className="w-full bg-white text-black font-black py-6 rounded-3xl text-xl uppercase italic tracking-tighter shadow-2xl active:scale-95 transition-all flex items-center justify-center gap-3"
+                    >
+                      <Plus size={24} />
+                      Simular Aproximação
+                    </button>
+                    
+                    <p className="text-[10px] text-center text-white/20 uppercase tracking-[0.2em] font-bold">Saldo: R$ {userData.saldo.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</p>
+                  </div>
+                )}
+
+                {(nfcStep === 'success' || nfcStep === 'error') && (
+                  <button 
+                    onClick={() => setIsNfcModalOpen(false)}
+                    className="w-full bg-white/10 hover:bg-white/20 text-white font-black py-5 rounded-3xl text-lg uppercase tracking-widest transition-all"
+                  >
+                    Fechar
+                  </button>
+                )}
+                
+                {nfcStep === 'scanning' && (
+                  <div className="py-10 flex flex-col items-center">
+                    <div className="w-full h-1 bg-white/5 rounded-full overflow-hidden">
+                      <motion.div 
+                        initial={{ x: '-100%' }}
+                        animate={{ x: '100%' }}
+                        transition={{ duration: 1.5, repeat: Infinity, ease: "linear" }}
+                        className="w-1/2 h-full bg-white opacity-40 shadow-[0_0_20px_white]"
+                      />
+                    </div>
+                  </div>
+                )}
               </motion.div>
             </motion.div>
           )}
