@@ -1,5 +1,5 @@
 {
-  "name": "FrontBank08",
+  "name": "FrontBank",
   "description": "Aplicativo bancário fictício com sistema de PIX funcional entre dispositivos.",
   "requestFramePermissions": [],
   "majorCapabilities": []

@@ -39,12 +39,18 @@ service cloud.firestore {
       allow read: if isAuthenticated() && (
         request.auth.uid == resource.data.senderUid || 
         request.auth.uid == resource.data.recipientUid ||
+        request.auth.uid == resource.data.senderId || 
+        request.auth.uid == resource.data.recipientId ||
+        request.auth.uid == resource.data.from ||
+        request.auth.uid == resource.data.to ||
         isAdmin()
       );
       
-      // Criar transação (registro do PIX)
-      allow create: if isAuthenticated() && 
-                    request.resource.data.senderUid == request.auth.uid;
+      // Criar transação (PIX, Investimentos, Cassino)
+      allow create: if isAuthenticated() && (
+        request.resource.data.from == request.auth.uid ||
+        request.resource.data.senderId == request.auth.uid
+      );
     }
   }
 }

@@ -45,7 +45,14 @@ import {
   History,
   QrCode,
   Copy,
-  Download
+  Download,
+  TrendingUp,
+  Bitcoin,
+  ArrowUpRight,
+  ArrowDownRight,
+  Dices,
+  Trophy,
+  Zap
 } from 'lucide-react';
 
 // --- Types ---
@@ -57,6 +64,7 @@ interface UserData {
   saldo: number;
   createdAt: any;
   role?: string;
+  btcBalance?: number;
 }
 
 interface TransactionData {
@@ -217,10 +225,49 @@ export default function App() {
   const [cards, setCards] = useState<CardData[]>([]);
   const [loading, setLoading] = useState(true);
   const [view, setView] = useState<'login' | 'register' | 'dashboard' | 'admin'>('login');
-  const [dashboardSection, setDashboardSection] = useState<'main' | 'cards' | 'history' | 'security'>('main');
+  const [dashboardSection, setDashboardSection] = useState<'main' | 'cards' | 'history' | 'security' | 'investments' | 'casino'>('main');
   const [isQrModalOpen, setIsQrModalOpen] = useState(false);
   const [qrAmount, setQrAmount] = useState<string>('');
   const [toasts, setToasts] = useState<Toast[]>([]);
+  
+  // Bitcoin State
+  const [btcPrice, setBtcPrice] = useState<number | null>(null);
+  const [btcHistory, setBtcHistory] = useState<number[]>([]);
+  const [btcChange, setBtcChange] = useState<number>(0);
+  const [isInvesting, setIsInvesting] = useState(false);
+  const [investAction, setInvestAction] = useState<'buy' | 'sell'>('buy');
+  const [investAmount, setInvestAmount] = useState<string>('');
+  const [casinoSubTab, setCasinoSubTab] = useState<'bitcoin' | 'lion'>('lion');
+
+  // Lion Game State
+  const [betAmount, setBetAmount] = useState<string>('');
+  const [isSpinning, setIsSpinning] = useState(false);
+  const [slotResult, setSlotResult] = useState<string[]>(['LION', 'LION', 'LION']);
+  const [gameMessage, setGameMessage] = useState('FAÇA SUA APOSTA');
+
+  const renderSlotSymbol = (symbol: string) => {
+    switch (symbol) {
+      case 'LION':
+        return (
+          <svg viewBox="0 0 24 24" className="w-16 h-16 text-orange-500 fill-none stroke-current stroke-[1.5]">
+            <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8z" />
+            <path d="M12 7c-2.76 0-5 2.24-5 5s2.24 5 5 5 5-2.24 5-5-2.24-5-5-5zm0 8c-1.65 0-3-1.35-3-3s1.35-3 3-3 3 1.35 3 3-1.35 3-3 3z" />
+            <path d="M12 10v4M10 12h4M12 12l2 2M12 12l-2-2M12 12l2-2M12 12l-2 2" />
+            <path d="M7 7l1.5 1.5M17 7l-1.5 1.5M7 17l1.5-1.5M17 17l-1.5-1.5" />
+          </svg>
+        );
+      case 'FIRE':
+        return <Zap size={48} className="text-red-500" />;
+      case 'DIAMOND':
+        return <Trophy size={48} className="text-blue-400" />;
+      case 'ORANGE':
+        return <Dices size={48} className="text-orange-400" />;
+      case 'SEVEN':
+        return <span className="text-6xl font-black text-white italic">7</span>;
+      default:
+        return null;
+    }
+  };
   
   // Admin State
   const [isAdminLoggedIn, setIsAdminLoggedIn] = useState(false);
@@ -238,6 +285,33 @@ export default function App() {
   const removeToast = (id: number) => {
     setToasts((prev) => prev.filter((t) => t.id !== id));
   };
+
+  // Fetch Bitcoin Price
+  useEffect(() => {
+    const fetchBtcPrice = async () => {
+      try {
+        const response = await fetch('https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=brl&include_24hr_change=true');
+        const data = await response.json();
+        const price = data.bitcoin.brl;
+        const change = data.bitcoin.brl_24h_change;
+        
+        setBtcPrice(price);
+        setBtcChange(change);
+        setBtcHistory(prev => {
+          const newHistory = [...prev, price].slice(-20);
+          return newHistory;
+        });
+      } catch (error) {
+        console.error('Error fetching BTC price:', error);
+      }
+    };
+
+    if (dashboardSection === 'investments') {
+      fetchBtcPrice();
+      const interval = setInterval(fetchBtcPrice, 30000); // 30 seconds
+      return () => clearInterval(interval);
+    }
+  }, [dashboardSection]);
 
   // Auth Listener
   useEffect(() => {
@@ -648,6 +722,183 @@ export default function App() {
     }
   };
 
+  const handleBitcoinTrade = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!userData || !btcPrice) return;
+
+    const amount = parseFloat(investAmount);
+    if (isNaN(amount) || amount <= 0) {
+      showToast('Digite um valor válido', 'error');
+      return;
+    }
+
+    setIsInvesting(true);
+    try {
+      await runTransaction(db, async (transaction) => {
+        const userRef = doc(db, 'users', userData.uid);
+        const userDoc = await transaction.get(userRef);
+        if (!userDoc.exists()) throw new Error('Usuário não encontrado');
+
+        const currentData = userDoc.data() as UserData;
+        const currentBalance = currentData.saldo;
+        const currentBtcBalance = currentData.btcBalance || 0;
+
+        if (investAction === 'buy') {
+          if (currentBalance < amount) throw new Error('Saldo insuficiente');
+          
+          const btcToReceive = amount / btcPrice;
+          transaction.update(userRef, {
+            saldo: currentBalance - amount,
+            btcBalance: currentBtcBalance + btcToReceive
+          });
+
+          // Transaction log
+          const transRef = doc(collection(db, 'transactions'));
+          transaction.set(transRef, {
+            from: userData.uid,
+            to: 'BITCOIN_EXCHANGE',
+            senderUid: userData.uid,
+            senderName: userData.nome,
+            recipientUid: 'BITCOIN_EXCHANGE',
+            recipientName: 'Mercado Bitcoin',
+            tipo: 'INVESTMENT',
+            amount: amount,
+            btcAmount: btcToReceive,
+            action: 'BUY',
+            timestamp: serverTimestamp()
+          });
+        } else {
+          // Sell
+          const btcToSell = amount / btcPrice;
+          if (currentBtcBalance < btcToSell) throw new Error('BTC insuficiente');
+
+          transaction.update(userRef, {
+            saldo: currentBalance + amount,
+            btcBalance: currentBtcBalance - btcToSell
+          });
+
+          // Transaction log
+          const transRef = doc(collection(db, 'transactions'));
+          transaction.set(transRef, {
+            from: 'BITCOIN_EXCHANGE',
+            to: userData.uid,
+            senderUid: 'BITCOIN_EXCHANGE',
+            senderName: 'Mercado Bitcoin',
+            recipientUid: userData.uid,
+            recipientName: userData.nome,
+            tipo: 'INVESTMENT',
+            amount: amount,
+            btcAmount: btcToSell,
+            action: 'SELL',
+            timestamp: serverTimestamp()
+          });
+        }
+      });
+
+      showToast(`${investAction === 'buy' ? 'Compra' : 'Venda'} realizada com sucesso!`);
+      setInvestAmount('');
+    } catch (error: any) {
+      showToast(error.message || 'Erro na operação', 'error');
+    } finally {
+      setIsInvesting(false);
+    }
+  };
+
+  const handleLionLuck = async () => {
+    if (!userData || isSpinning) return;
+    const amount = parseFloat(betAmount);
+    
+    if (isNaN(amount) || amount <= 0) {
+      showToast('Digite um valor de aposta', 'error');
+      return;
+    }
+
+    if (userData.saldo < amount) {
+      showToast('Saldo insuficiente', 'error');
+      return;
+    }
+
+    setIsSpinning(true);
+    setGameMessage('GIRANDO...');
+
+    // Fake spin animation
+    const symbols = ['LION', 'FIRE', 'DIAMOND', 'ORANGE', 'SEVEN'];
+    const timer = setInterval(() => {
+      setSlotResult([
+        symbols[Math.floor(Math.random() * symbols.length)],
+        symbols[Math.floor(Math.random() * symbols.length)],
+        symbols[Math.floor(Math.random() * symbols.length)]
+      ]);
+    }, 100);
+
+    setTimeout(async () => {
+      clearInterval(timer);
+      const isWin = Math.random() > 0.7; // 30% win rate
+      let multi = 0;
+      let finalResult = [];
+
+      if (isWin) {
+        multi = Math.random() > 0.8 ? 10 : 2; // High multi chance
+        const winSym = multi === 10 ? 'LION' : (Math.random() > 0.5 ? 'DIAMOND' : 'FIRE');
+        finalResult = [winSym, winSym, winSym];
+      } else {
+        finalResult = [
+          symbols[Math.floor(Math.random() * symbols.length)],
+          symbols[Math.floor(Math.random() * symbols.length)],
+          symbols[Math.floor(Math.random() * symbols.length)]
+        ];
+        // Ensure no accident win
+        if (finalResult[0] === finalResult[1] && finalResult[1] === finalResult[2]) {
+           finalResult[2] = finalResult[2] === 'LION' ? 'FIRE' : 'LION';
+        }
+      }
+
+      setSlotResult(finalResult);
+
+      try {
+        await runTransaction(db, async (transaction) => {
+          const userRef = doc(db, 'users', userData.uid);
+          const userDoc = await transaction.get(userRef);
+          if (!userDoc.exists()) return;
+
+          const currentBalance = userDoc.data().saldo;
+          const winAmount = isWin ? amount * multi : 0;
+          
+          transaction.update(userRef, {
+            saldo: currentBalance - amount + winAmount
+          });
+
+          // Log
+          const transRef = doc(collection(db, 'transactions'));
+          transaction.set(transRef, {
+            from: userData.uid,
+            to: 'LION_CASINO',
+            senderUid: userData.uid,
+            senderName: userData.nome,
+            recipientUid: 'LION_CASINO',
+            recipientName: 'Lion Casino',
+            tipo: 'BET',
+            amount: amount,
+            ganho: winAmount,
+            result: isWin ? 'WIN' : 'LOSS',
+            timestamp: serverTimestamp()
+          });
+        });
+
+        if (isWin) {
+          setGameMessage(`GANHOU R$ ${(amount * multi).toFixed(2)}!`);
+          showToast(`VITÓRIA! +R$ ${(amount * multi).toFixed(2)}`, 'success');
+        } else {
+          setGameMessage('TENTE NOVAMENTE');
+        }
+      } catch (err) {
+        showToast('Erro ao processar aposta', 'error');
+      } finally {
+        setIsSpinning(false);
+      }
+    }, 2000);
+  };
+
   const getPixPayload = (key: string, name: string, amount?: number) => {
     const cleanName = name.normalize("NFD").replace(/[\u0300-\u036f]/g, "").slice(0, 25);
     const accountInfo = `0014br.gov.bcb.pix01${key.length.toString().padStart(2, '0')}${key}`;
@@ -886,7 +1137,7 @@ export default function App() {
                     </div>
                   </div>
 
-                    <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
+                    <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-7 gap-3">
                       <button 
                         onClick={() => setDashboardSection('main')}
                         className={`p-4 rounded-2xl border transition-all flex flex-col items-center gap-2 ${dashboardSection === 'main' ? 'bg-white text-[#764ba2] border-white' : 'bg-white/5 text-white border-white/10 hover:bg-white/10'}`}
@@ -900,6 +1151,13 @@ export default function App() {
                       >
                         <QrCode size={20} />
                         <span className="text-[10px] font-bold uppercase tracking-widest">Receber</span>
+                      </button>
+                      <button 
+                        onClick={() => setDashboardSection('casino')}
+                        className={`p-4 rounded-2xl border transition-all flex flex-col items-center gap-2 ${dashboardSection === 'casino' || dashboardSection === 'investments' ? 'bg-orange-600 text-white border-orange-400 shadow-[0_0_15px_rgba(234,88,12,0.4)]' : 'bg-white/5 text-white border-white/10 hover:bg-white/10'}`}
+                      >
+                        <Dices size={20} />
+                        <span className="text-[10px] font-bold uppercase tracking-widest">Cassino</span>
                       </button>
                       <button 
                         onClick={() => setDashboardSection('history')}
@@ -1179,6 +1437,198 @@ export default function App() {
                       </div>
                     </motion.div>
                   )}
+
+                  {/* CASINO & INVESTMENTS SECTION */}
+                  {dashboardSection === 'casino' && (
+                    <motion.div
+                      key="section-casino"
+                      initial={{ opacity: 0, y: 20 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      exit={{ opacity: 0, y: -20 }}
+                      className="space-y-6"
+                    >
+                      <div className="flex bg-black/40 p-2 rounded-2xl border border-white/5 gap-2">
+                        <button 
+                          onClick={() => setCasinoSubTab('lion')}
+                          className={`flex-1 py-3 rounded-xl font-black text-xs uppercase tracking-[0.2em] transition-all flex items-center justify-center gap-2 ${casinoSubTab === 'lion' ? 'bg-orange-600 text-white shadow-lg' : 'text-white/40 hover:bg-white/5'}`}
+                        >
+                          <Zap size={14} /> Lion Luck
+                        </button>
+                        <button 
+                          onClick={() => setCasinoSubTab('bitcoin')}
+                          className={`flex-1 py-3 rounded-xl font-black text-xs uppercase tracking-[0.2em] transition-all flex items-center justify-center gap-2 ${casinoSubTab === 'bitcoin' ? 'bg-orange-600 text-white shadow-lg' : 'text-white/40 hover:bg-white/5'}`}
+                        >
+                          <Bitcoin size={14} /> Bitcoin
+                        </button>
+                      </div>
+
+                      {casinoSubTab === 'bitcoin' ? (
+                        /* BITCOIN UI (Already defined, reused here) */
+                        <div className="bg-[#0a0a0a] backdrop-blur-2xl p-8 rounded-[32px] border border-orange-500/30 shadow-[0_0_50px_rgba(249,115,22,0.15)] overflow-hidden relative">
+                           {/* ... Content of Bitcoin section inherited from before ... */}
+                           <div className="absolute -top-24 -right-24 w-64 h-64 bg-orange-500/10 rounded-full blur-[80px]"></div>
+                           <div className="relative z-10">
+                            <div className="flex flex-col md:flex-row md:items-center justify-between gap-6 mb-12">
+                              <div className="flex items-center gap-4">
+                                <div className="w-16 h-16 bg-orange-500 flex items-center justify-center rounded-2xl shadow-[0_0_20px_rgba(249,115,22,0.5)] transform -rotate-3">
+                                  <Bitcoin size={32} className="text-black" />
+                                </div>
+                                <div>
+                                  <h3 className="text-2xl font-black text-white italic uppercase tracking-tighter">Market Bitcoin</h3>
+                                  <p className="text-orange-500/60 text-xs font-bold tracking-widest uppercase">Operação em Tempo Real</p>
+                                </div>
+                              </div>
+                              <div className="text-right">
+                                <p className="text-[10px] font-black text-white/40 uppercase tracking-[0.2em] mb-1">Preço Atual (BRL)</p>
+                                <div className="flex items-center justify-end gap-3">
+                                  <h4 className="text-4xl font-black text-white tracking-tighter">
+                                    {btcPrice ? `R$ ${btcPrice.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}` : '---'}
+                                  </h4>
+                                  <div className={`px-2 py-1 rounded-md text-[10px] font-black flex items-center gap-1 ${btcChange >= 0 ? 'bg-green-500/20 text-green-400' : 'bg-red-500/20 text-red-500'}`}>
+                                    {btcChange >= 0 ? <ArrowUpRight size={10} /> : <ArrowDownRight size={10} />}
+                                    {Math.abs(btcChange).toFixed(2)}%
+                                  </div>
+                                </div>
+                              </div>
+                            </div>
+
+                            <div className="bg-black/40 h-48 rounded-3xl mb-12 border border-white/5 relative flex items-end p-4 overflow-hidden">
+                              <svg className="w-full h-full opacity-60" viewBox="0 0 100 100" preserveAspectRatio="none">
+                                <path 
+                                  d={`M 0 100 ${btcHistory.map((p, i) => `L ${(i / (btcHistory.length - 1)) * 100} ${100 - ((p - Math.min(...btcHistory)) / (Math.max(...btcHistory) - Math.min(...btcHistory) || 1)) * 80}`).join(' ')} L 100 100 Z`}
+                                  fill="url(#gradient-btc)"
+                                />
+                                <path 
+                                  d={`M 0 ${100 - ((btcHistory[0] - Math.min(...btcHistory)) / (Math.max(...btcHistory) - Math.min(...btcHistory) || 1)) * 80} ${btcHistory.map((p, i) => `L ${(i / (btcHistory.length - 1)) * 100} ${100 - ((p - Math.min(...btcHistory)) / (Math.max(...btcHistory) - Math.min(...btcHistory) || 1)) * 80}`).join(' ')}`}
+                                  fill="none"
+                                  stroke="#f39c12"
+                                  strokeWidth="2"
+                                />
+                                <defs>
+                                  <linearGradient id="gradient-btc" x1="0" y1="0" x2="0" y2="1">
+                                    <stop offset="0%" stopColor="#f39c12" stopOpacity="0.4" />
+                                    <stop offset="100%" stopColor="#f39c12" stopOpacity="0" />
+                                  </linearGradient>
+                                </defs>
+                              </svg>
+                            </div>
+
+                            <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+                                <div className="space-y-6">
+                                  <div className="bg-white/5 p-6 rounded-2xl border border-white/10">
+                                    <p className="text-[10px] font-black uppercase tracking-widest text-white/40 mb-3">Sua Carteira Bitcoin</p>
+                                    <div className="flex items-center justify-between">
+                                      <div className="flex items-center gap-3">
+                                        <div className="w-10 h-10 bg-orange-500/20 text-orange-500 rounded-xl flex items-center justify-center">
+                                          <Bitcoin size={20} />
+                                        </div>
+                                        <div>
+                                          <p className="text-xl font-black text-white">{(userData?.btcBalance || 0).toFixed(8)} BTC</p>
+                                          <p className="text-[10px] text-white/40 font-bold">~ R$ {((userData?.btcBalance || 0) * (btcPrice || 0)).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</p>
+                                        </div>
+                                      </div>
+                                    </div>
+                                  </div>
+                                  <div className="flex gap-2">
+                                    <button onClick={() => setInvestAction('buy')} className={`flex-1 py-4 rounded-xl font-black text-sm uppercase tracking-widest transition-all ${investAction === 'buy' ? 'bg-orange-500 text-black' : 'bg-white/5 text-white'}`}>Comprar</button>
+                                    <button onClick={() => setInvestAction('sell')} className={`flex-1 py-4 rounded-xl font-black text-sm uppercase tracking-widest transition-all ${investAction === 'sell' ? 'bg-red-600 text-white' : 'bg-white/5 text-white'}`}>Vender</button>
+                                  </div>
+                                </div>
+                                <form onSubmit={handleBitcoinTrade} className="bg-white/5 p-8 rounded-3xl border border-white/10 space-y-6">
+                                  <input type="number" value={investAmount} onChange={(e) => setInvestAmount(e.target.value)} placeholder="Valor BRL" className="w-full bg-black/40 border-2 border-white/10 rounded-2xl py-4 px-6 text-xl font-black text-white outline-none focus:border-orange-500" />
+                                  <button type="submit" className={`w-full py-5 rounded-2xl font-black text-lg uppercase tracking-widest transition-all ${investAction === 'buy' ? 'bg-orange-500 text-black' : 'bg-red-600 text-white'}`}>
+                                    {isInvesting ? 'Processando...' : 'Confirmar'}
+                                  </button>
+                                </form>
+                            </div>
+                           </div>
+                        </div>
+                      ) : (
+                        /* LION LUCK UI */
+                        <div className="bg-[#0f0f1a] backdrop-blur-3xl p-8 rounded-[32px] border-4 border-orange-600 shadow-[0_0_100px_rgba(234,88,12,0.2)] overflow-hidden relative">
+                          <div className="absolute top-0 left-0 w-full h-full bg-[radial-gradient(circle_at_center,_rgba(234,88,12,0.1)_0%,_transparent_70%)]"></div>
+                          
+                          <div className="relative z-10 flex flex-col items-center">
+                            <div className="bg-black/60 px-6 py-2 rounded-full border border-orange-500/30 mb-8 animate-pulse">
+                              <p className="text-[10px] font-black text-orange-500 uppercase tracking-[0.4em]">Jackpot Acumulado: R$ 1.500.230,40</p>
+                            </div>
+
+                            <div className="flex items-center gap-6 mb-10">
+                                <div className="w-24 h-24 bg-orange-600 rounded-[32px] flex items-center justify-center shadow-[0_0_30px_rgba(234,88,12,0.5)] transform -rotate-12 border-4 border-black">
+                                  <svg viewBox="0 0 24 24" className="w-16 h-16 text-black fill-none stroke-current stroke-2">
+                                    <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8z" />
+                                    <path d="M12 7c-2.76 0-5 2.24-5 5s2.24 5 5 5 5-2.24 5-5-2.24-5-5-5z" />
+                                    <path d="M12 10l-2 5h4l-2-5z" />
+                                  </svg>
+                                </div>
+                                <div className="text-center md:text-left">
+                                  <h3 className="text-6xl font-black text-white italic tracking-tighter uppercase leading-none">LION <span className="text-orange-600">LUCK</span></h3>
+                                  <p className="text-orange-500/60 font-black tracking-widest text-xs mt-2 uppercase">A Sorte do Rei da Selva</p>
+                                </div>
+                            </div>
+
+                            {/* Slot Machine Display */}
+                            <div className="w-full max-w-lg grid grid-cols-3 gap-4 mb-12 bg-black/80 p-6 rounded-[40px] border-8 border-orange-700 shadow-inner">
+                              {slotResult.map((sym, i) => (
+                                <motion.div 
+                                  key={i}
+                                  animate={isSpinning ? { y: [0, -20, 0] } : {}}
+                                  transition={{ repeat: Infinity, duration: 0.1 }}
+                                  className="aspect-square bg-gradient-to-b from-white/10 to-white/5 rounded-3xl flex items-center justify-center shadow-2xl border border-white/5"
+                                >
+                                  {renderSlotSymbol(sym)}
+                                </motion.div>
+                              ))}
+                            </div>
+
+                            <div className="w-full max-w-sm space-y-6">
+                              <div className="text-center">
+                                <p className={`text-2xl font-black italic tracking-widest mb-4 transition-colors ${isSpinning ? 'text-white/20' : 'text-orange-500 uppercase'}`}>
+                                  {gameMessage}
+                                </p>
+                              </div>
+
+                              <div className="bg-black/40 p-6 rounded-3xl border border-white/5">
+                                <label className="block text-[10px] font-bold text-white/40 uppercase tracking-widest mb-3 text-center">Valor da Aposta</label>
+                                <div className="flex items-center justify-center gap-4">
+                                  <button onClick={() => setBetAmount(prev => (Math.max(0, parseFloat(prev || '0') - 10)).toString())} className="w-12 h-12 bg-white/5 rounded-xl border border-white/10 text-white font-black hover:bg-orange-600 transition-colors">-</button>
+                                  <input 
+                                    type="number"
+                                    value={betAmount}
+                                    onChange={(e) => setBetAmount(e.target.value)}
+                                    placeholder="0,00"
+                                    className="bg-transparent text-center text-4xl font-black text-white w-32 outline-none"
+                                  />
+                                  <button onClick={() => setBetAmount(prev => (parseFloat(prev || '0') + 10).toString())} className="w-12 h-12 bg-white/5 rounded-xl border border-white/10 text-white font-black hover:bg-orange-600 transition-colors">+</button>
+                                </div>
+                              </div>
+
+                              <button 
+                                onClick={handleLionLuck}
+                                disabled={isSpinning}
+                                className={`w-full py-6 rounded-[32px] font-black text-2xl uppercase italic tracking-tighter transition-all transform active:scale-95 shadow-[0_20px_50px_rgba(234,88,12,0.3)] ${isSpinning ? 'bg-orange-900/50 text-white/20' : 'bg-gradient-to-r from-orange-600 to-red-600 text-white hover:shadow-orange-600/50'}`}
+                              >
+                                {isSpinning ? 'SORTEANDO...' : 'JOGAR AGORA'}
+                              </button>
+                              
+                              <p className="text-[10px] text-center text-white/20 font-bold uppercase tracking-widest">Saldo Disponível: R$ {userData?.saldo.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</p>
+                            </div>
+                          </div>
+                        </div>
+                      )}
+
+                      <div className="bg-black/60 backdrop-blur-xl p-8 rounded-[32px] border border-white/5 shadow-2xl text-center">
+                        <p className="text-[10px] text-white/30 uppercase tracking-[0.3em] font-black leading-relaxed">
+                          ⚠️ Jogo responsável: Este é um sistema simulado. <br/>
+                          Apostas envolvem riscos. Não use dinheiro essencial.
+                        </p>
+                      </div>
+                    </motion.div>
+                  )}
+
+                  {/* Bitcoin and Investments Section removed as it's merged into Casino */}
+                  
+                  {/* SECURITY SECTION */}
 
                   {/* SECURITY SECTION */}
                   {dashboardSection === 'security' && (
