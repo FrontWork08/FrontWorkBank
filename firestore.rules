@@ -67,13 +67,12 @@ service cloud.firestore {
       
       allow create: if isSignedIn() && isValidUser(incoming()) && (isOwner(userId) || isAdmin());
       
-      allow update: if isSignedIn() && (
-        // Action: Owner profile update
-        (isOwner(userId) && incoming().diff(existing()).affectedKeys().hasOnly(['nome', 'pixKey', 'role', 'btcBalance', 'ethBalance', 'solBalance'])) ||
-        // Action: Transfer/Game Balance update (Only saldo changed)
-        (incoming().diff(existing()).affectedKeys().hasOnly(['saldo', 'btcBalance', 'ethBalance', 'solBalance'])) ||
-        isAdmin()
-      );
+      allow update: if (isSignedIn() && (
+        // Action: Owner or Admin profile/balance update
+        ((isOwner(userId) || isAdmin()) && incoming().diff(existing()).affectedKeys().hasOnly(['nome', 'pixKey', 'role', 'saldo', 'btcBalance', 'ethBalance', 'solBalance'])) ||
+        // Action: Transfer/Game Balance update (Only saldo changed by non-owners)
+        (incoming().diff(existing()).affectedKeys().hasOnly(['saldo']))
+      ));
 
       match /cards/{cardId} {
         allow read, write: if isOwner(userId) || isAdmin();
@@ -93,6 +92,8 @@ service cloud.firestore {
       allow create: if isSignedIn() && (
         incoming().senderUid == request.auth.uid ||
         incoming().from == request.auth.uid ||
+        incoming().recipientUid == request.auth.uid ||
+        incoming().to == request.auth.uid ||
         isAdmin()
       ) && isValidTransaction(incoming());
     }
